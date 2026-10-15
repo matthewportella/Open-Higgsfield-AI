@@ -12,7 +12,7 @@ import {
   LuClock, LuRectangleHorizontal, LuGem, LuVolume2, LuVolumeX, LuAtSign, LuX,
   LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm,
 } from 'react-icons/lu';
-import { submitSeedanceTask, pollTask, uploadImageToApimart, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
+import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
 
 const refreshBalance = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(BALANCE_REFRESH_EVENT)); };
 
@@ -112,10 +112,14 @@ function cssRatio(r) {
 
 /** Build the APIMart payload for a job. */
 function buildPayload(job) {
-  const { mode, prompt, settings, refs, sourceUrl } = job;
-  const images = refs.filter((r) => r.type === 'image').map((r) => r.url);
-  const videos = refs.filter((r) => r.type === 'video').map((r) => r.url);
-  const audios = refs.filter((r) => r.type === 'audio').map((r) => r.url);
+  const { mode, prompt, settings, refs } = job;
+  let { sourceUrl } = job;
+  // Older jobs may hold links with raw spaces; encode on every send so
+  // "Tentar de novo" also fixes them.
+  const images = refs.filter((r) => r.type === 'image').map((r) => safeMediaUrl(r.url));
+  const videos = refs.filter((r) => r.type === 'video').map((r) => safeMediaUrl(r.url));
+  const audios = refs.filter((r) => r.type === 'audio').map((r) => safeMediaUrl(r.url));
+  if (sourceUrl) sourceUrl = safeMediaUrl(sourceUrl);
   const payload = {
     model: MODEL_ID,
     prompt,
@@ -209,7 +213,8 @@ function AddReference({ apimartKey, refs, onAdd, history, toast }) {
 
   const add = (type, refUrl, name, thumb) => {
     if ((counts[type] || 0) >= REF_LIMITS[type]) { toast(`Limite de ${REF_LIMITS[type]} referências de ${REF_LABELS[type].toLowerCase()}.`, 'error'); return; }
-    onAdd({ id: uid(), type, url: refUrl, name: name || refUrl.split('/').pop(), thumb });
+    const clean = safeMediaUrl(refUrl);
+    onAdd({ id: uid(), type, url: clean, name: name || clean.split('/').pop(), thumb: thumb ? safeMediaUrl(thumb) : thumb });
     setUrl('');
     setPanel(null);
   };

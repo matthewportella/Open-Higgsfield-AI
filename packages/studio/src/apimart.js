@@ -11,6 +11,29 @@ const FAILURE = new Set(['failed', 'failure', 'error', 'cancelled', 'canceled'])
 
 export const PENDING_STORAGE_KEY = 'apimart_pending_job';
 
+/**
+ * APIMart rejects media URLs with raw whitespace ("encode spaces as %20").
+ * Encode whitespace and other unsafe characters without double-encoding
+ * sequences that are already escaped.
+ */
+export function safeMediaUrl(url) {
+    if (typeof url !== 'string') return url;
+    // Escape only what is not allowed in a URL: whitespace, non-ASCII,
+    // a few unsafe ASCII characters and stray "%" signs. Existing %XX
+    // sequences are kept as they are.
+    return url.trim().replace(/[^\x21-\x7E]|["<>\\^`{|}]|%(?![0-9A-Fa-f]{2})/gu, (c) => encodeURIComponent(c));
+}
+
+/** Replace spaces and unusual characters in an upload's file name. */
+function safeFileName(name) {
+    const dot = name.lastIndexOf('.');
+    const base = (dot > 0 ? name.slice(0, dot) : name)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'image';
+    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : 'png';
+    return `${base.slice(0, 60)}.${ext || 'png'}`;
+}
+
 async function readError(response) {
     const text = await response.text();
     try {
@@ -113,7 +136,7 @@ export async function generateSeedance25(key, params) {
         duration: Math.min(30, Math.max(4, Math.round(Number(params.duration) || 5))),
     };
     if (params.image_url) {
-        payload.image_with_roles = [{ url: params.image_url, role: 'first_frame' }];
+        payload.image_with_roles = [{ url: safeMediaUrl(params.image_url), role: 'first_frame' }];
     } else if (params.aspect_ratio) {
         payload.size = params.aspect_ratio;
     }
@@ -129,7 +152,7 @@ export function uploadImageToApimart(key, file, onProgress) {
     return new Promise((resolve, reject) => {
         if (!key) { reject(new Error('Adicione sua chave da APIMart em Configurações.')); return; }
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', file, safeFileName(file.name || 'image.png'));
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${PROXY}/v1/uploads/images`);
         xhr.setRequestHeader('x-apimart-key', key);
@@ -141,7 +164,7 @@ export function uploadImageToApimart(key, file, onProgress) {
         xhr.onload = () => {
             let data = {};
             try { data = JSON.parse(xhr.responseText); } catch { /* handled below */ }
-            if (xhr.status >= 200 && xhr.status < 300 && data.url) resolve(data.url);
+            if (xhr.status >= 200 && xhr.status < 300 && data.url) resolve(safeMediaUrl(data.url));
             else reject(new Error(`APIMart upload: ${data.error?.message || xhr.statusText || xhr.status}`));
         };
         xhr.onerror = () => reject(new Error('Falha de rede ao enviar a imagem para a APIMart'));
