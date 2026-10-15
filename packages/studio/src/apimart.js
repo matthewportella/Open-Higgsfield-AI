@@ -87,6 +87,21 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
     throw new Error('APIMart: o vídeo demorou mais de 40 minutos. Confira no painel da APIMart.');
 }
 
+/** Submit a raw /v1/videos/generations payload; returns the APIMart task id. */
+export async function submitSeedanceTask(key, payload) {
+    if (!key) throw new Error('Adicione sua chave da APIMart em Configurações.');
+    const response = await fetch(`${PROXY}/v1/videos/generations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-apimart-key': key },
+        body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`APIMart: ${await readError(response)}`);
+    const submitted = await response.json();
+    const taskId = submitted.data?.[0]?.task_id || submitted.data?.task_id || submitted.task_id;
+    if (!taskId) throw new Error('APIMart: nenhum task_id retornado');
+    return taskId;
+}
+
 /** Seedance 2.5 text-to-video, or image-to-video when image_url is given. */
 export async function generateSeedance25(key, params) {
     if (!key) throw new Error('Este modelo usa a APIMart. Adicione sua chave da APIMart em Configurações.');
@@ -103,16 +118,7 @@ export async function generateSeedance25(key, params) {
         payload.size = params.aspect_ratio;
     }
 
-    const response = await fetch(`${PROXY}/v1/videos/generations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-apimart-key': key },
-        body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error(`APIMart: ${await readError(response)}`);
-
-    const submitted = await response.json();
-    const taskId = submitted.data?.[0]?.task_id || submitted.data?.task_id || submitted.task_id;
-    if (!taskId) throw new Error('APIMart: nenhum task_id retornado');
+    const taskId = await submitSeedanceTask(key, payload);
     const startedAt = Date.now();
     if (params.onRequestId) params.onRequestId(taskId, startedAt);
     return pollTask(key, taskId, { onStatus: params.onStatus, startedAt });
