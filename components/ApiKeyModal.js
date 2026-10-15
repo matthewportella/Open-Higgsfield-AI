@@ -2,16 +2,19 @@
 
 import { useState } from 'react';
 
-export default function ApiKeyModal({ onSave }) {
-  const [key, setKey] = useState('');
+export default function ApiKeyModal({ onSave, initialKeys = {} }) {
+  const [muapiKey, setMuapiKey] = useState(initialKeys.muapi || '');
+  const [apimartKey, setApimartKey] = useState(initialKeys.apimart || '');
   const [error, setError] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const trimmed = key.trim();
-    if (!trimmed) { setError('Please enter your API key'); return; }
-    onSave(trimmed);
+    const keys = { muapi: muapiKey.trim(), apimart: apimartKey.trim() };
+    if (!keys.muapi && !keys.apimart) { setError('Enter at least one API key'); return; }
+    onSave(keys);
   };
+
+  const inputClass = 'w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-[#d9ff00]/40 transition-colors';
 
   return (
     <div className="min-h-screen bg-[#050505] flex items-center justify-center px-4">
@@ -26,25 +29,42 @@ export default function ApiKeyModal({ onSave }) {
             Open Higgsfield AI
           </h1>
           <p className="text-white/40 text-sm">
-            Enter your <a href="https://muapi.ai" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">Muapi.ai</a> API key to start generating
+            Add a <a href="https://apimart.ai/keys" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">APIMart</a> key
+            for Seedance 2.5, a <a href="https://muapi.ai" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">Muapi.ai</a> key
+            for every other model, or both
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-white/40 uppercase tracking-widest mb-2">
-              Muapi API Key
+              APIMart API Key <span className="normal-case tracking-normal font-medium text-white/30">· Seedance 2.5</span>
             </label>
             <input
               type="password"
-              value={key}
-              onChange={(e) => { setKey(e.target.value); setError(''); }}
-              placeholder="Enter your API key..."
-              className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-[#d9ff00]/40 transition-colors"
+              value={apimartKey}
+              onChange={(e) => { setApimartKey(e.target.value); setError(''); }}
+              placeholder="sk-..."
+              className={inputClass}
               suppressHydrationWarning
             />
-            {error && <p className="mt-1 text-red-400 text-xs">{error}</p>}
           </div>
+
+          <div>
+            <label className="block text-xs font-bold text-white/40 uppercase tracking-widest mb-2">
+              Muapi API Key <span className="normal-case tracking-normal font-medium text-white/30">· all other models</span>
+            </label>
+            <input
+              type="password"
+              value={muapiKey}
+              onChange={(e) => { setMuapiKey(e.target.value); setError(''); }}
+              placeholder="Enter your API key..."
+              className={inputClass}
+              suppressHydrationWarning
+            />
+          </div>
+
+          {error && <p className="text-red-400 text-xs">{error}</p>}
 
           <button
             type="submit"
@@ -55,10 +75,7 @@ export default function ApiKeyModal({ onSave }) {
           </button>
 
           <p className="text-center text-xs text-white/30">
-            Don&apos;t have a key?{' '}
-            <a href="https://muapi.ai" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">
-              Get one free at Muapi.ai →
-            </a>
+            Keys are stored only in this browser.
           </p>
         </form>
       </div>

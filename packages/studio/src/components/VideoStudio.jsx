@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { generateVideo, generateI2V, uploadFile } from '../muapi.js';
+import { generateSeedance25, uploadImageToApimart } from '../apimart.js';
 import {
     t2vModels,
     i2vModels,
@@ -13,6 +14,7 @@ import {
     getDurationsForI2VModel,
     getResolutionsForI2VModel,
     getModesForModel,
+    isApimartModel,
 } from '../models.js';
 
 // ── tiny helpers ──────────────────────────────────────────────────────────────
@@ -177,7 +179,7 @@ function ControlBtn({ icon, label, onClick, style }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function VideoStudio({ apiKey, onGenerationComplete, historyItems }) {
+export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, historyItems }) {
     // ── mode state ──
     const [imageMode, setImageMode] = useState(false);   // i2v
     const [v2vMode, setV2vMode] = useState(false);
@@ -334,9 +336,10 @@ export default function VideoStudio({ apiKey, onGenerationComplete, historyItems
         setImageProgress(0);
         
         try {
-            const url = await uploadFile(apiKey, file, (pct) => {
-                setImageProgress(pct);
-            });
+            const onProgress = (pct) => setImageProgress(pct);
+            const url = apiKey
+                ? await uploadFile(apiKey, file, onProgress)
+                : await uploadImageToApimart(apimartKey, file, onProgress);
             setUploadedImageUrl(url);
 
             // Clear v2v if active
@@ -511,7 +514,9 @@ export default function VideoStudio({ apiKey, onGenerationComplete, historyItems
                 if (selectedQuality) i2vParams.quality = selectedQuality;
                 if (selectedMode) i2vParams.mode = selectedMode;
 
-                res = await generateI2V(apiKey, i2vParams);
+                res = isApimartModel(selectedModel)
+                    ? await generateSeedance25(apimartKey, i2vParams)
+                    : await generateI2V(apiKey, i2vParams);
                 if (!res?.url) throw new Error('No video URL returned by API');
 
                 const genId = res.id || Date.now().toString();
@@ -545,7 +550,9 @@ export default function VideoStudio({ apiKey, onGenerationComplete, historyItems
                 if (selectedQuality) params.quality = selectedQuality;
                 if (selectedMode) params.mode = selectedMode;
 
-                res = await generateVideo(apiKey, params);
+                res = isApimartModel(selectedModel)
+                    ? await generateSeedance25(apimartKey, params)
+                    : await generateVideo(apiKey, params);
                 if (!res?.url) throw new Error('No video URL returned by API');
 
                 const genId = res.id || Date.now().toString();
@@ -564,13 +571,13 @@ export default function VideoStudio({ apiKey, onGenerationComplete, historyItems
         } catch (e) {
             hadError = true;
             console.error('[VideoStudio]', e);
-            setGenerateError(e.message?.slice(0, 80) || 'Generation failed');
+            setGenerateError(e.message?.slice(0, 160) || 'Generation failed');
             setTimeout(() => setGenerateError(null), 4000);
         } finally {
             setGenerating(false);
         }
     }, [
-        apiKey, prompt, v2vMode, imageMode, selectedModel, selectedAr, selectedDuration,
+        apiKey, apimartKey, prompt, v2vMode, imageMode, selectedModel, selectedAr, selectedDuration,
         selectedResolution, selectedQuality, selectedMode, uploadedImageUrl, uploadedVideoUrl,
         lastGenerationId, getCurrentModel, addToLocalHistory, showVideoInCanvas, onGenerationComplete,
     ]);

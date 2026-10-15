@@ -27,6 +27,7 @@ async function pollForResult(requestId, key, maxAttempts = 900, interval = 2000)
 }
 
 async function submitAndPoll(endpoint, payload, key, onRequestId, maxAttempts = 60) {
+    if (!key) throw new Error('Este modelo usa a Muapi. Adicione sua chave da Muapi em Settings.');
     const url = `${BASE_URL}/api/v1/${endpoint}`;
     const response = await fetch(url, {
         method: 'POST',
@@ -123,6 +124,7 @@ export async function processLipSync(apiKey, params) {
 
 export function uploadFile(apiKey, file, onProgress) {
     return new Promise((resolve, reject) => {
+        if (!apiKey) { reject(new Error('O envio deste arquivo usa a Muapi. Adicione sua chave da Muapi em Settings.')); return; }
         const url = `${BASE_URL}/api/v1/upload_file`;
         const formData = new FormData();
         formData.append('file', file);

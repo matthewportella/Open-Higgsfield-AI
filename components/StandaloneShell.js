@@ -12,27 +12,37 @@ const TABS = [
 ];
 
 const STORAGE_KEY = 'muapi_key';
+const APIMART_STORAGE_KEY = 'apimart_key';
 
 export default function StandaloneShell() {
   const [apiKey, setApiKey] = useState(null);
+  const [apimartKey, setApimartKey] = useState('');
+  const [editingKeys, setEditingKeys] = useState(false);
   const [activeTab, setActiveTab] = useState('image');
   const [showSettings, setShowSettings] = useState(false);
   const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
     setHasMounted(true);
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) setApiKey(stored);
+    const stored = localStorage.getItem(STORAGE_KEY) || '';
+    const storedApimart = localStorage.getItem(APIMART_STORAGE_KEY) || '';
+    if (stored || storedApimart) setApiKey(stored);
+    setApimartKey(storedApimart);
+    if (!stored && storedApimart) setActiveTab('video');
   }, []);
 
-  const handleKeySave = useCallback((key) => {
-    localStorage.setItem(STORAGE_KEY, key);
-    setApiKey(key);
+  const handleKeySave = useCallback(({ muapi, apimart }) => {
+    if (muapi) localStorage.setItem(STORAGE_KEY, muapi); else localStorage.removeItem(STORAGE_KEY);
+    if (apimart) localStorage.setItem(APIMART_STORAGE_KEY, apimart); else localStorage.removeItem(APIMART_STORAGE_KEY);
+    setApiKey(muapi);
+    setApimartKey(apimart);
+    setEditingKeys(false);
+    setShowSettings(false);
+    if (!muapi) setActiveTab('video');
   }, []);
 
   const handleKeyChange = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    setApiKey(null);
+    setEditingKeys(true);
   }, []);
 
   if (!hasMounted) return (
@@ -41,9 +51,11 @@ export default function StandaloneShell() {
     </div>
   );
 
-  if (!apiKey) {
-    return <ApiKeyModal onSave={handleKeySave} />;
+  if (apiKey === null || editingKeys) {
+    return <ApiKeyModal onSave={handleKeySave} initialKeys={{ muapi: apiKey || '', apimart: apimartKey }} />;
   }
+
+  const needsMuapi = !apiKey && activeTab !== 'video';
 
   return (
     <div className="h-screen bg-[#050505] flex flex-col overflow-hidden">
@@ -83,10 +95,26 @@ export default function StandaloneShell() {
 
       {/* Studio Content */}
       <div className="flex-1">
-        {activeTab === 'image'   && <ImageStudio   apiKey={apiKey} />}
-        {activeTab === 'video'   && <VideoStudio   apiKey={apiKey} />}
-        {activeTab === 'lipsync' && <LipSyncStudio apiKey={apiKey} />}
-        {activeTab === 'cinema'  && <CinemaStudio  apiKey={apiKey} />}
+        {needsMuapi ? (
+          <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-6">
+            <p className="text-white/60 text-sm max-w-sm">
+              This studio runs on Muapi models. Add a Muapi key in Settings, or use Seedance 2.5 via APIMart in Video Studio.
+            </p>
+            <button
+              onClick={() => setActiveTab('video')}
+              className="px-4 py-2 rounded-lg bg-[#d9ff00] text-black text-sm font-bold"
+            >
+              Open Video Studio
+            </button>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'image'   && <ImageStudio   apiKey={apiKey} />}
+            {activeTab === 'video'   && <VideoStudio   apiKey={apiKey} apimartKey={apimartKey} />}
+            {activeTab === 'lipsync' && <LipSyncStudio apiKey={apiKey} />}
+            {activeTab === 'cinema'  && <CinemaStudio  apiKey={apiKey} />}
+          </>
+        )}
       </div>
 
       {/* Settings Modal */}
@@ -94,15 +122,18 @@ export default function StandaloneShell() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
           <div className="bg-[#111] border border-white/10 rounded-2xl p-8 w-full max-w-md">
             <h2 className="text-white font-bold text-xl mb-6">Settings</h2>
+            <p className="text-white/50 text-sm mb-2">
+              APIMart key: <span className="text-white/80 font-mono">{apimartKey ? `${apimartKey.slice(0, 6)}••••••••` : 'not set'}</span>
+            </p>
             <p className="text-white/50 text-sm mb-4">
-              Current API key: <span className="text-white/80 font-mono">{apiKey.slice(0, 8)}••••••••</span>
+              Muapi key: <span className="text-white/80 font-mono">{apiKey ? `${apiKey.slice(0, 6)}••••••••` : 'not set'}</span>
             </p>
             <div className="flex gap-3">
               <button
                 onClick={handleKeyChange}
                 className="flex-1 py-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 text-sm transition-colors"
               >
-                Change API Key
+                Change API Keys
               </button>
               <button
                 onClick={() => setShowSettings(false)}
