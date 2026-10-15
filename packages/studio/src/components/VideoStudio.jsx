@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, forwardRef } from 'react';
 import { generateVideo, generateI2V, uploadFile } from '../muapi.js';
-import { generateSeedance25, uploadImageToApimart } from '../apimart.js';
+import { generateSeedance25, uploadImageToApimart, pollTask, PENDING_STORAGE_KEY } from '../apimart.js';
 import {
     t2vModels,
     i2vModels,
@@ -18,6 +18,68 @@ import {
 } from '../models.js';
 
 // ── tiny helpers ──────────────────────────────────────────────────────────────
+
+/** Second-by-second duration picker for models with a long duration range. */
+const DurationSlider = forwardRef(function DurationSlider({ options, value, onChange, onDone }, ref) {
+    const min = Math.min(...options);
+    const max = Math.max(...options);
+    const current = Math.min(max, Math.max(min, Number(value) || min));
+    const presets = [5, 10, 15, 20, 30].filter(v => v >= min && v <= max);
+    const step = (delta) => onChange(Math.min(max, Math.max(min, current + delta)));
+    return (
+        <div ref={ref} onClick={e => e.stopPropagation()} className="absolute bottom-[calc(100%+8px)] left-0 z-50 bg-[#111] rounded-3xl p-4 border border-white/10 flex flex-col gap-3 w-72 max-w-[calc(100vw-2rem)]">
+            <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Duração</span>
+                <span className="text-[10px] text-white/40">{min}–{max}s</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+                <button type="button" onClick={() => step(-1)} disabled={current <= min} aria-label="Menos 1 segundo" className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold disabled:opacity-30">−</button>
+                <div className="text-3xl font-black text-white tabular-nums">{current}<span className="text-base text-white/50 ml-0.5">s</span></div>
+                <button type="button" onClick={() => step(1)} disabled={current >= max} aria-label="Mais 1 segundo" className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold disabled:opacity-30">+</button>
+            </div>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={1}
+                value={current}
+                onChange={(e) => onChange(Number(e.target.value))}
+                aria-label="Duração em segundos"
+                className="w-full accent-[#d9ff00] cursor-pointer"
+            />
+            <div className="flex gap-1.5 flex-wrap">
+                {presets.map(v => (
+                    <button key={v} type="button" onClick={() => onChange(v)} className={`px-2.5 py-1 rounded-lg text-xs font-bold ${current === v ? 'bg-[#d9ff00] text-black' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>{v}s</button>
+                ))}
+            </div>
+            <button type="button" onClick={onDone} className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-bold">Pronto</button>
+        </div>
+    );
+});
+
+function formatElapsed(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = String(seconds % 60).padStart(2, '0');
+    return `${m}:${s}`;
+}
+
+function apimartStatusLabel({ status, progress, elapsed }) {
+    const time = formatElapsed(elapsed || 0);
+    if (status === 'processing' && progress > 0) return `Gerando ${progress}% · ${time}`;
+    if (status === 'processing') return `Gerando · ${time}`;
+    return `Na fila · ${time}`;
+}
+
+function readPendingJob() {
+    try { return JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || 'null'); } catch { return null; }
+}
+
+function writePendingJob(job) {
+    try {
+        if (job) localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(job));
+        else localStorage.removeItem(PENDING_STORAGE_KEY);
+    } catch { /* storage unavailable */ }
+}
 
 function getQualitiesForModel(modelList, modelId) {
     const model = modelList.find(m => m.id === modelId);
@@ -214,6 +276,7 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
 
     // ── generation / canvas ──
     const [generating, setGenerating] = useState(false);
+    const [apimartStatus, setApimartStatus] = useState(null);
     const [generateError, setGenerateError] = useState(null);
     const [canvasUrl, setCanvasUrl] = useState(null);
     const [canvasModel, setCanvasModel] = useState(null);
@@ -463,6 +526,41 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
         setShowCanvas(true);
     }, []);
 
+    // ── APIMart jobs: progress, persistence and resume after reload ───────────
+    const apimartCallbacks = useCallback((job) => ({
+        onRequestId: (taskId, startedAt) => writePendingJob({ ...job, taskId, startedAt }),
+        onStatus: (info) => setApimartStatus(info),
+    }), []);
+
+    const finishApimartJob = useCallback((job, res) => {
+        writePendingJob(null);
+        setApimartStatus(null);
+        const entry = { id: res.id, url: res.url, prompt: job.prompt || '', model: job.model, aspect_ratio: job.aspect_ratio, duration: job.duration, timestamp: new Date().toISOString() };
+        addToLocalHistory(entry);
+        showVideoInCanvas(res.url, job.model);
+        if (onGenerationComplete) onGenerationComplete({ url: res.url, model: job.model, prompt: job.prompt || '', type: 'video' });
+    }, [addToLocalHistory, showVideoInCanvas, onGenerationComplete]);
+
+    useEffect(() => {
+        const job = readPendingJob();
+        if (!job?.taskId || !apimartKey) return;
+        let cancelled = false;
+        setGenerating(true);
+        setApimartStatus({ status: 'pending', progress: 0, elapsed: Math.round((Date.now() - job.startedAt) / 1000) });
+        pollTask(apimartKey, job.taskId, { startedAt: job.startedAt, onStatus: (info) => { if (!cancelled) setApimartStatus(info); } })
+            .then((res) => { if (!cancelled) finishApimartJob(job, res); })
+            .catch((e) => {
+                if (cancelled) return;
+                writePendingJob(null);
+                setApimartStatus(null);
+                setGenerateError(e.message?.slice(0, 160) || 'Generation failed');
+                setTimeout(() => setGenerateError(null), 8000);
+            })
+            .finally(() => { if (!cancelled) setGenerating(false); });
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [apimartKey]);
+
     // ── generate ──────────────────────────────────────────────────────────────
     const handleGenerate = useCallback(async () => {
         const currentModel = getCurrentModel();
@@ -514,9 +612,13 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
                 if (selectedQuality) i2vParams.quality = selectedQuality;
                 if (selectedMode) i2vParams.mode = selectedMode;
 
-                res = isApimartModel(selectedModel)
-                    ? await generateSeedance25(apimartKey, i2vParams)
-                    : await generateI2V(apiKey, i2vParams);
+                if (isApimartModel(selectedModel)) {
+                    const job = { model: selectedModel, prompt: trimmedPrompt, aspect_ratio: selectedAr, duration: selectedDuration };
+                    res = await generateSeedance25(apimartKey, { ...i2vParams, ...apimartCallbacks(job) });
+                    finishApimartJob(job, res);
+                    return;
+                }
+                res = await generateI2V(apiKey, i2vParams);
                 if (!res?.url) throw new Error('No video URL returned by API');
 
                 const genId = res.id || Date.now().toString();
@@ -550,9 +652,13 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
                 if (selectedQuality) params.quality = selectedQuality;
                 if (selectedMode) params.mode = selectedMode;
 
-                res = isApimartModel(selectedModel)
-                    ? await generateSeedance25(apimartKey, params)
-                    : await generateVideo(apiKey, params);
+                if (isApimartModel(selectedModel)) {
+                    const job = { model: selectedModel, prompt: trimmedPrompt, aspect_ratio: selectedAr, duration: selectedDuration };
+                    res = await generateSeedance25(apimartKey, { ...params, ...apimartCallbacks(job) });
+                    finishApimartJob(job, res);
+                    return;
+                }
+                res = await generateVideo(apiKey, params);
                 if (!res?.url) throw new Error('No video URL returned by API');
 
                 const genId = res.id || Date.now().toString();
@@ -571,8 +677,10 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
         } catch (e) {
             hadError = true;
             console.error('[VideoStudio]', e);
+            writePendingJob(null);
+            setApimartStatus(null);
             setGenerateError(e.message?.slice(0, 160) || 'Generation failed');
-            setTimeout(() => setGenerateError(null), 4000);
+            setTimeout(() => setGenerateError(null), 8000);
         } finally {
             setGenerating(false);
         }
@@ -580,6 +688,7 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
         apiKey, apimartKey, prompt, v2vMode, imageMode, selectedModel, selectedAr, selectedDuration,
         selectedResolution, selectedQuality, selectedMode, uploadedImageUrl, uploadedVideoUrl,
         lastGenerationId, getCurrentModel, addToLocalHistory, showVideoInCanvas, onGenerationComplete,
+        apimartCallbacks, finishApimartJob,
     ]);
 
     // ── reset to prompt bar ───────────────────────────────────────────────────
@@ -924,6 +1033,15 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
                                                 onClick={toggleDropdown('duration')}
                                             />
                                             {openDropdown === 'duration' && (
+                                                getCurrentDurations(selectedModel).length > 8 ? (
+                                                    <DurationSlider
+                                                        ref={dropdownRef}
+                                                        options={getCurrentDurations(selectedModel)}
+                                                        value={selectedDuration}
+                                                        onChange={setSelectedDuration}
+                                                        onDone={() => setOpenDropdown(null)}
+                                                    />
+                                                ) : (
                                                 <div ref={dropdownRef} onClick={e => e.stopPropagation()} className="absolute bottom-[calc(100%+8px)] left-0 z-50 bg-[#111] rounded-3xl p-3 border border-white/10 flex flex-col w-52 max-w-[240px]">
                                                     <div className="text-[10px] font-bold text-secondary uppercase tracking-widest px-3 py-2 border-b border-white/5 mb-2">Duration</div>
                                                     <div className="flex flex-col gap-1">
@@ -932,6 +1050,7 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
                                                         ))}
                                                     </div>
                                                 </div>
+                                                )
                                             )}
                                         </div>
                                     )}
@@ -1008,7 +1127,7 @@ export default function VideoStudio({ apiKey, apimartKey, onGenerationComplete, 
                                     className="bg-primary text-black px-6 md:px-8 py-3 md:py-3.5 rounded-xl md:rounded-[1.5rem] font-black text-sm md:text-base hover:shadow-glow hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2.5 w-full sm:w-auto shadow-lg disabled:opacity-60 disabled:scale-100"
                                 >
                                     {generating ? (
-                                        <><span className="animate-spin inline-block text-black">◌</span> Generating...</>
+                                        <><span className="animate-spin inline-block text-black">◌</span> {apimartStatus ? apimartStatusLabel(apimartStatus) : 'Generating...'}</>
                                     ) : generateError ? (
                                         `Error: ${generateError}`
                                     ) : (

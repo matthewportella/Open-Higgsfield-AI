@@ -2117,7 +2117,7 @@ export const t2vModels = [
     "inputs": {
       "prompt": { "type": "string", "title": "Prompt", "name": "prompt", "description": "The prompt to generate the video" },
       "aspect_ratio": { "enum": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"], "title": "Aspect Ratio", "name": "aspect_ratio", "type": "string", "description": "Aspect ratio of the output video.", "default": "9:16" },
-      "duration": { "enum": [5, 8, 10, 15, 20, 30], "title": "Duration", "name": "duration", "type": "int", "description": "The duration of the generated video in seconds", "default": 5 },
+      "duration": { "enum": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], "title": "Duration", "name": "duration", "type": "int", "description": "The duration of the generated video in seconds", "default": 5 },
       "resolution": { "enum": ["480p", "720p", "1080p"], "title": "Resolution", "name": "resolution", "type": "string", "description": "The resolution of the generated video.", "default": "480p" }
     }
   },
@@ -4815,7 +4815,7 @@ export const i2vModels = [
     "inputs": {
       "prompt": { "type": "string", "title": "Prompt", "name": "prompt", "description": "The prompt to guide video generation from the image." },
       "aspect_ratio": { "enum": ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"], "title": "Aspect Ratio", "name": "aspect_ratio", "type": "string", "description": "Aspect ratio of the output video.", "default": "9:16" },
-      "duration": { "enum": [5, 8, 10, 15, 20, 30], "title": "Duration", "name": "duration", "type": "int", "description": "The duration of the generated video in seconds", "default": 5 },
+      "duration": { "enum": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], "title": "Duration", "name": "duration", "type": "int", "description": "The duration of the generated video in seconds", "default": 5 },
       "resolution": { "enum": ["480p", "720p", "1080p"], "title": "Resolution", "name": "resolution", "type": "string", "description": "The resolution of the generated video.", "default": "480p" }
     }
   },
