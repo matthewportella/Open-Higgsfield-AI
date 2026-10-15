@@ -15,6 +15,7 @@ import {
 import { submitSeedanceTask, pollTask, uploadImageToApimart } from '@/packages/studio/src/apimart';
 
 const JOBS_KEY = 'hf_video_jobs';
+const LEGACY_PENDING_KEY = 'apimart_pending_job';
 const MAX_JOBS = 100;
 const MODEL_ID = 'seedance-2.5';
 const MODEL_NAME = 'Seedance 2.5';
@@ -32,8 +33,40 @@ const REF_LABELS = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio' };
 const ratioLabel = (r) => (r === 'adaptive' ? 'Auto' : r);
 const money = (v) => `$${v.toFixed(2)}`;
 
+function blankJob(patch) {
+  const now = Date.now();
+  return {
+    id: uid(), taskId: null, mode: 'create', prompt: '', refs: [], sourceUrl: null,
+    settings: { duration: 5, ratio: 'adaptive', resolution: '480p', audio: true, watermark: false },
+    status: 'queued', progress: 0, url: null, error: null, cost: null,
+    createdAt: now, startedAt: now, favorite: false, ...patch,
+  };
+}
+
+// The previous Video Studio kept finished videos only in memory, but saved an
+// in-flight APIMart task under this key; bring it into the new history once.
+function migrateLegacyPending(jobs) {
+  try {
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_PENDING_KEY) || 'null');
+    if (!legacy?.taskId || jobs.some((j) => j.taskId === legacy.taskId)) return jobs;
+    localStorage.removeItem(LEGACY_PENDING_KEY);
+    return [blankJob({
+      taskId: legacy.taskId,
+      prompt: legacy.prompt || '',
+      settings: { duration: Number(legacy.duration) || 5, ratio: legacy.aspect_ratio || 'adaptive', resolution: '480p', audio: true, watermark: false },
+      createdAt: legacy.startedAt || Date.now(),
+      startedAt: legacy.startedAt || Date.now(),
+      imported: true,
+    }), ...jobs];
+  } catch {
+    return jobs;
+  }
+}
+
 function loadJobs() {
-  try { return JSON.parse(localStorage.getItem(JOBS_KEY) || '[]'); } catch { return []; }
+  let jobs = [];
+  try { jobs = JSON.parse(localStorage.getItem(JOBS_KEY) || '[]'); } catch { jobs = []; }
+  return migrateLegacyPending(jobs);
 }
 async function copyText(text) {
   try {
@@ -419,6 +452,9 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
   const [gridSize, setGridSize] = useState(() => Number(readPref('hf_video_grid', '220')) || 220);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importValue, setImportValue] = useState('');
+  const [importPrompt, setImportPrompt] = useState('');
   const [lightbox, setLightbox] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [now, setNow] = useState(() => Date.now());
@@ -456,7 +492,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
       if (job.status !== 'queued' && job.status !== 'processing') continue;
       polling.current.add(job.id);
       pollTask(apimartKey, job.taskId, {
-        startedAt: job.startedAt,
+        startedAt: job.imported ? Date.now() : job.startedAt,
         onStatus: ({ status, progress }) => updateJob(job.id, { status: status === 'processing' ? 'processing' : 'queued', progress }),
       })
         .then((res) => {
@@ -537,6 +573,28 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
       },
       onDelete: () => setJobs((list) => list.filter((j) => j.id !== job.id)),
     }),
+  };
+
+  const importVideo = (e) => {
+    e.preventDefault();
+    const value = importValue.trim();
+    const label = importPrompt.trim() || 'Vídeo importado';
+    if (/^task_[A-Za-z0-9_-]+$/.test(value)) {
+      if (!apimartKey) { onNeedKey?.(); return; }
+      if (jobs.some((j) => j.taskId === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
+      setJobs((list) => [blankJob({ taskId: value, prompt: label, imported: true }), ...list]);
+    } else if (/^https?:\/\/\S+$/.test(value)) {
+      if (jobs.some((j) => j.url === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
+      setJobs((list) => [blankJob({ status: 'completed', progress: 100, url: value, prompt: label, imported: true }), ...list]);
+    } else {
+      toast('Cole um ID que comece com task_ ou um link https:// do vídeo', 'error');
+      return;
+    }
+    setImportValue('');
+    setImportPrompt('');
+    setShowImport(false);
+    setFavoritesOnly(false);
+    toast('Vídeo adicionado ao histórico');
   };
 
   const visible = favoritesOnly ? jobs.filter((j) => j.favorite) : jobs;
@@ -704,6 +762,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setFavoritesOnly(false)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] ${!favoritesOnly ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:text-white'}`}><LuHistory size={14} />Histórico</button>
             <button type="button" onClick={() => setFavoritesOnly(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] ${favoritesOnly ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:text-white'}`}><LuHeart size={14} />Favoritos</button>
+            <button type="button" onClick={() => setShowImport(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] text-white/50 hover:text-white"><LuUpload size={14} />Importar</button>
             <button type="button" onClick={() => setShowHelp(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] text-white/50 hover:text-white"><LuCircleHelp size={14} />Como funciona</button>
           </div>
           <div className="flex items-center gap-2">
@@ -747,6 +806,28 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* import */}
+      {showImport && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowImport(false)}>
+          <form onSubmit={importVideo} className="w-full max-w-md bg-[#111113] border border-white/10 rounded-2xl p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Importar vídeo</h2>
+              <button type="button" onClick={() => setShowImport(false)} aria-label="Fechar" className="text-white/50 hover:text-white"><LuX size={18} /></button>
+            </div>
+            <p className="text-sm text-white/60">Cole o <b className="text-white">ID da tarefa</b> (começa com <code className="text-[#d9ff00]">task_</code>) ou o <b className="text-white">link do vídeo</b>. Você encontra os dois nos registros de uso do painel da APIMart.</p>
+            <div>
+              <label htmlFor="hf-import" className="block text-xs text-white/45 mb-1">ID da tarefa ou link</label>
+              <input id="hf-import" value={importValue} onChange={(e) => setImportValue(e.target.value)} placeholder="task_01K… ou https://…mp4" className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 outline-none focus:border-[#d9ff00]/40" />
+            </div>
+            <div>
+              <label htmlFor="hf-import-prompt" className="block text-xs text-white/45 mb-1">Descrição (opcional)</label>
+              <input id="hf-import-prompt" value={importPrompt} onChange={(e) => setImportPrompt(e.target.value)} placeholder="Ex.: Carlos real testimonial" className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 outline-none focus:border-[#d9ff00]/40" />
+            </div>
+            <button type="submit" className="w-full py-2.5 rounded-xl bg-[#d9ff00] text-black font-bold text-sm">Adicionar ao histórico</button>
+          </form>
         </div>
       )}
 
