@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-export default function ApiKeyModal({ onSave, initialKeys = {} }) {
+export default function ApiKeyModal({ onSave, onCancel, initialKeys = {} }) {
   const [muapiKey, setMuapiKey] = useState(initialKeys.muapi || '');
   const [apimartKey, setApimartKey] = useState(initialKeys.apimart || '');
   const [error, setError] = useState('');
@@ -10,7 +10,7 @@ export default function ApiKeyModal({ onSave, initialKeys = {} }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     const keys = { muapi: muapiKey.trim(), apimart: apimartKey.trim() };
-    if (!keys.muapi && !keys.apimart) { setError('Enter at least one API key'); return; }
+    if (!keys.muapi && !keys.apimart) { setError('Informe pelo menos uma chave'); return; }
     onSave(keys);
   };
 
@@ -29,16 +29,16 @@ export default function ApiKeyModal({ onSave, initialKeys = {} }) {
             Open Higgsfield AI
           </h1>
           <p className="text-white/40 text-sm">
-            Add a <a href="https://apimart.ai/keys" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">APIMart</a> key
-            for Seedance 2.5, a <a href="https://muapi.ai" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">Muapi.ai</a> key
-            for every other model, or both
+            Cole a chave da <a href="https://apimart.ai/keys" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">APIMart</a> para
+            usar o Seedance 2.5, a da <a href="https://muapi.ai" target="_blank" rel="noreferrer" className="text-[#d9ff00] hover:underline">Muapi</a> para
+            os demais modelos, ou as duas
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-white/40 uppercase tracking-widest mb-2">
-              APIMart API Key <span className="normal-case tracking-normal font-medium text-white/30">· Seedance 2.5</span>
+              Chave APIMart <span className="normal-case tracking-normal font-medium text-white/30">· Seedance 2.5</span>
             </label>
             <input
               type="password"
@@ -52,13 +52,13 @@ export default function ApiKeyModal({ onSave, initialKeys = {} }) {
 
           <div>
             <label className="block text-xs font-bold text-white/40 uppercase tracking-widest mb-2">
-              Muapi API Key <span className="normal-case tracking-normal font-medium text-white/30">· all other models</span>
+              Chave Muapi <span className="normal-case tracking-normal font-medium text-white/30">· demais modelos</span>
             </label>
             <input
               type="password"
               value={muapiKey}
               onChange={(e) => { setMuapiKey(e.target.value); setError(''); }}
-              placeholder="Enter your API key..."
+              placeholder="Cole sua chave..."
               className={inputClass}
               suppressHydrationWarning
             />
@@ -71,11 +71,21 @@ export default function ApiKeyModal({ onSave, initialKeys = {} }) {
             className="w-full bg-[#d9ff00] text-black font-black py-3 rounded-xl hover:opacity-90 transition-opacity"
             suppressHydrationWarning
           >
-            Launch Studio
+            Abrir estúdio
           </button>
 
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="w-full py-3 rounded-xl bg-white/5 text-white/70 hover:bg-white/10 text-sm transition-colors"
+            >
+              Cancelar
+            </button>
+          )}
+
           <p className="text-center text-xs text-white/30">
-            Keys are stored only in this browser.
+            As chaves ficam salvas só neste navegador.
           </p>
         </form>
       </div>
