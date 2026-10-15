@@ -12,7 +12,9 @@ import {
   LuClock, LuRectangleHorizontal, LuGem, LuVolume2, LuVolumeX, LuAtSign, LuX,
   LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm,
 } from 'react-icons/lu';
-import { submitSeedanceTask, pollTask, uploadImageToApimart } from '@/packages/studio/src/apimart';
+import { submitSeedanceTask, pollTask, uploadImageToApimart, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
+
+const refreshBalance = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(BALANCE_REFRESH_EVENT)); };
 
 const JOBS_KEY = 'hf_video_jobs';
 const LEGACY_PENDING_KEY = 'apimart_pending_job';
@@ -498,6 +500,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
         .then((res) => {
           updateJob(job.id, { status: 'completed', url: res.url, cost: typeof res.cost === 'number' ? res.cost : job.cost, progress: 100 });
           toast('Vídeo pronto!');
+          refreshBalance();
         })
         .catch((err) => {
           updateJob(job.id, { status: 'failed', error: err.message });
@@ -518,6 +521,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     try {
       const taskId = await submitSeedanceTask(apimartKey, buildPayload(pending));
       updateJob(pending.id, { taskId, startedAt: Date.now() });
+      refreshBalance();
     } catch (err) {
       updateJob(pending.id, { status: 'failed', error: err.message });
       toast(err.message, 'error');
@@ -579,7 +583,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     e.preventDefault();
     const value = importValue.trim();
     const label = importPrompt.trim() || 'Vídeo importado';
-    if (/^task_[A-Za-z0-9_-]+$/.test(value)) {
+    if (/^[A-Za-z0-9_-]{6,}$/.test(value)) {
       if (!apimartKey) { onNeedKey?.(); return; }
       if (jobs.some((j) => j.taskId === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
       setJobs((list) => [blankJob({ taskId: value, prompt: label, imported: true }), ...list]);
@@ -587,7 +591,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
       if (jobs.some((j) => j.url === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
       setJobs((list) => [blankJob({ status: 'completed', progress: 100, url: value, prompt: label, imported: true }), ...list]);
     } else {
-      toast('Cole um ID que comece com task_ ou um link https:// do vídeo', 'error');
+      toast('Cole o ID da tarefa (sem espaços) ou um link https:// do vídeo', 'error');
       return;
     }
     setImportValue('');
@@ -817,7 +821,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
               <h2 className="text-lg font-bold text-white">Importar vídeo</h2>
               <button type="button" onClick={() => setShowImport(false)} aria-label="Fechar" className="text-white/50 hover:text-white"><LuX size={18} /></button>
             </div>
-            <p className="text-sm text-white/60">Cole o <b className="text-white">ID da tarefa</b> (começa com <code className="text-[#d9ff00]">task_</code>) ou o <b className="text-white">link do vídeo</b>. Você encontra os dois nos registros de uso do painel da APIMart.</p>
+            <p className="text-sm text-white/60">Cole o <b className="text-white">ID da tarefa</b> (normalmente começa com <code className="text-[#d9ff00]">task_</code>) ou o <b className="text-white">link do vídeo</b>. Você encontra os dois nos registros de uso do painel da APIMart.</p>
             <div>
               <label htmlFor="hf-import" className="block text-xs text-white/45 mb-1">ID da tarefa ou link</label>
               <input id="hf-import" value={importValue} onChange={(e) => setImportValue(e.target.value)} placeholder="task_01K… ou https://…mp4" className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 outline-none focus:border-[#d9ff00]/40" />

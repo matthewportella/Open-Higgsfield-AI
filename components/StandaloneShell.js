@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { ImageStudio, LipSyncStudio, CinemaStudio } from 'studio';
 import VideoWorkspace from './video/VideoWorkspace';
 import {
-  LuImage, LuVideo, LuMic, LuClapperboard, LuSettings, LuWallet, LuX, LuSparkles,
+  LuImage, LuVideo, LuMic, LuClapperboard, LuSettings, LuX, LuSparkles,
 } from 'react-icons/lu';
 import ApiKeyModal from './ApiKeyModal';
+import WalletBadge from './WalletBadge';
 
 const TABS = [
   { id: 'video',   label: 'Vídeo',    hint: 'Seedance 2.5 e mais', icon: LuVideo,        provider: 'both' },
@@ -97,12 +98,7 @@ export default function StandaloneShell() {
           })}
         </nav>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <span className="hidden sm:flex items-center gap-1.5 px-2 text-[12px] text-white/45" title={apimartKey ? 'APIMart conectada' : 'APIMart não conectada'}>
-            <StatusDot on={Boolean(apimartKey)} />APIMart
-          </span>
-          <a href="https://apimart.ai" target="_blank" rel="noreferrer" className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-[13px] text-white">
-            <LuWallet size={14} />Créditos
-          </a>
+          <WalletBadge apimartKey={apimartKey} onNeedKey={() => setEditingKeys(true)} />
           <button onClick={() => setShowSettings(true)} aria-label="Configurações" className="w-8 h-8 rounded-lg flex items-center justify-center text-white/55 hover:text-white hover:bg-white/5">
             <LuSettings size={17} />
           </button>

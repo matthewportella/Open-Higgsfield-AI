@@ -148,3 +148,28 @@ export function uploadImageToApimart(key, file, onProgress) {
         xhr.send(formData);
     });
 }
+
+/**
+ * Account balance for the key's owner. Falls back to the key's own quota
+ * when the account endpoint is unavailable. Values are in USD.
+ */
+export async function getApimartBalance(key) {
+    if (!key) throw new Error('Sem chave da APIMart');
+    for (const path of ['v1/user/balance', 'v1/balance']) {
+        const response = await fetch(`${PROXY}/${path}`, { headers: { 'x-apimart-key': key }, cache: 'no-store' });
+        if (response.status === 401) throw new Error('Chave da APIMart inválida');
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (!data.success) continue;
+        return {
+            remaining: Number(data.remain_balance),
+            used: Number(data.used_balance),
+            remainingCredits: Number(data.remain_credits),
+            unlimited: Boolean(data.unlimited_quota) || Number(data.remain_balance) === -1,
+            scope: path === 'v1/user/balance' ? 'account' : 'key',
+        };
+    }
+    throw new Error('Não foi possível ler o saldo da APIMart');
+}
+
+export const BALANCE_REFRESH_EVENT = 'apimart:balance-refresh';

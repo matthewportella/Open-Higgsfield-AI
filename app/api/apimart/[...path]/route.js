@@ -9,6 +9,8 @@ const ALLOWED = [
   { method: 'POST', pattern: /^v1\/videos\/generations$/ },
   { method: 'POST', pattern: /^v1\/uploads\/images$/ },
   { method: 'GET', pattern: /^v1\/tasks\/[A-Za-z0-9_-]+$/ },
+  { method: 'GET', pattern: /^v1\/user\/balance$/ },
+  { method: 'GET', pattern: /^v1\/balance$/ },
 ];
 
 async function forward(request, { params }) {
