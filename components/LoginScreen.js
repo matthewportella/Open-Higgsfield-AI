@@ -46,8 +46,12 @@ export default function LoginScreen() {
         const { data, error: err } = await auth.signUp({ email: cleanEmail, password, options: { emailRedirectTo: `${window.location.origin}/studio` } });
         if (err) throw err;
         if (!data.session) {
-          setInfo('Conta criada! Abra o e-mail de confirmação que enviamos e depois entre aqui.');
-          setMode('login');
+          // Invited e-mails are confirmed by the database, so sign in right away.
+          const { error: loginErr } = await auth.signInWithPassword({ email: cleanEmail, password });
+          if (loginErr) {
+            setInfo('Conta criada! Agora entre com seu e-mail e senha.');
+            setMode('login');
+          }
         }
       } else {
         const { error: err } = await auth.resetPasswordForEmail(cleanEmail, { redirectTo: `${window.location.origin}/studio?reset=1` });

@@ -10,6 +10,13 @@ pelo painel/MCP do Supabase com estes nomes:
    usadas pelo servidor MCP com token.
 2. `restrict_helper_functions` — remove acesso anônimo de `is_member`,
    `is_owner` e `current_email`.
+3. `auto_confirm_invited_signups` — e-mails convidados entram já confirmados,
+   sem depender do link do e-mail de confirmação.
+
+Configuração de Auth (painel do Supabase → Authentication → URL Configuration):
+Site URL = `https://open-higgsfield-flax-one.vercel.app` e Redirect URL
+`https://open-higgsfield-flax-one.vercel.app/**`. Sem isso, os links de e-mail
+(recuperar senha) apontam para `localhost:3000`.
 
 Variáveis de ambiente necessárias (Vercel e `.env.local`):
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `ENGINE_KEY_SECRET`
