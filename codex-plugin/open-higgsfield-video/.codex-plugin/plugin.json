@@ -1,0 +1,13 @@
+{
+  "name": "open-higgsfield-video",
+  "version": "1.0.0",
+  "description": "Crie, estenda e edite vídeos com Seedance 2.5 na plataforma Open Higgsfield usando o saldo da sua conta APIMart.",
+  "author": { "name": "Matheus Portella" },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Open Higgsfield · Vídeo",
+    "shortDescription": "Gere vídeos Seedance 2.5 pela sua plataforma",
+    "category": "Creativity"
+  }
+}

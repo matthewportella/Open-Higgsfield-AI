@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "open-higgsfield-video": {
+      "type": "streamable-http",
+      "url": "https://open-higgsfield-flax-one.vercel.app/api/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": { "type": "api_key", "headerScheme": "bearer" }
+        }
+      }
+    }
+  }
+}

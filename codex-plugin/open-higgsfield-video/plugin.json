@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "open-higgsfield-video",
+  "version": "1.0.0",
+  "description": "Crie, estenda e edite vídeos com Seedance 2.5 na plataforma Open Higgsfield usando o saldo da sua conta APIMart.",
+  "author": { "name": "Matheus Portella", "url": "https://open-higgsfield-flax-one.vercel.app" },
+  "homepage": "https://open-higgsfield-flax-one.vercel.app",
+  "repository": "https://github.com/matthewportella/Open-Higgsfield-AI",
+  "license": "MIT",
+  "keywords": ["video", "seedance", "apimart", "higgsfield"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Open Higgsfield · Vídeo",
+        "shortDescription": "Gere vídeos Seedance 2.5 pela sua plataforma",
+        "category": "Creativity",
+        "composerIcon": "./assets/icon.png",
+        "defaultPrompt": "Crie um vídeo vertical de 5 segundos em 480p de "
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "open-higgsfield",
+  "interface": { "displayName": "Open Higgsfield" },
+  "plugins": [
+    {
+      "name": "open-higgsfield-video",
+      "source": { "source": "local", "path": "./codex-plugin/open-higgsfield-video" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Creativity"
+    }
+  ]
+}

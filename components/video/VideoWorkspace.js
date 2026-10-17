@@ -478,6 +478,22 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
   }, []);
 
   useEffect(() => { saveJobs(jobs); }, [jobs]);
+
+  // Links such as /studio?import=task_123 (returned by the Codex plugin) add
+  // those generations to this browser's history, then clean the address bar.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const ids = url.searchParams.getAll('import').flatMap((v) => v.split(',')).map((v) => v.trim()).filter((v) => /^[A-Za-z0-9_-]{4,}$/.test(v));
+    if (!ids.length) return;
+    setJobs((list) => {
+      const fresh = ids.filter((taskId) => !list.some((j) => j.taskId === taskId));
+      return [...fresh.map((taskId) => blankJob({ taskId, prompt: 'Criado pelo Codex', imported: true })), ...list];
+    });
+    url.searchParams.delete('import');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    toast(ids.length > 1 ? `${ids.length} vídeos adicionados ao histórico` : 'Vídeo adicionado ao histórico');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => { try { localStorage.setItem('hf_video_view', view); localStorage.setItem('hf_video_grid', String(gridSize)); } catch { /* ignore */ } }, [view, gridSize]);
 
   const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'processing');
