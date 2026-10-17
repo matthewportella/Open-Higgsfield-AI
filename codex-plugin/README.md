@@ -6,9 +6,8 @@ Peça ao Codex para criar vídeos na sua plataforma:
 
 O Codex usa as ferramentas do servidor MCP da plataforma
 (`https://open-higgsfield-flax-one.vercel.app/api/mcp`), gera com **Seedance 2.5**
-pela APIMart usando o **saldo da sua conta APIMart**, espera o vídeo ficar pronto
-e devolve o link do vídeo e um link **Abrir na plataforma**, que adiciona o vídeo
-ao histórico do estúdio.
+pela APIMart usando as **APIs ativadas no estúdio**, espera o vídeo ficar pronto
+e devolve o link. Todo vídeo entra no histórico compartilhado da equipe.
 
 ## Ferramentas
 
@@ -22,47 +21,43 @@ ao histórico do estúdio.
 
 ## Instalação
 
-Você precisa da sua chave da APIMart (https://apimart.ai/keys). Cada pessoa pode
-usar a própria chave; o gasto sai do saldo da conta a que a chave pertence.
-
-### Opção 1 — Codex CLI pelo terminal (mais simples)
-
-1. Guarde a chave numa variável de ambiente (coloque no `~/.zshrc` para ficar fixa):
+1. Entre no estúdio, abra **APIs → Codex** e clique em **Gerar token**. O token
+   começa com `ohf_` e aparece uma vez só. Ele usa as APIs já ativadas no estúdio;
+   você não precisa da chave da APIMart.
+2. Guarde o token numa variável de ambiente (coloque no `~/.zshrc` para ficar fixa):
 
    ```bash
-   export APIMART_API_KEY="cole-sua-chave-aqui"
+   export OHF_TOKEN="ohf_cole-seu-token"
    ```
 
-2. Adicione o servidor ao Codex:
+3. Adicione o servidor ao Codex:
 
    ```bash
-   codex mcp add open-higgsfield-video --url https://open-higgsfield-flax-one.vercel.app/api/mcp --bearer-token-env-var APIMART_API_KEY
+   codex mcp add open-higgsfield-video --url https://open-higgsfield-flax-one.vercel.app/api/mcp --bearer-token-env-var OHF_TOKEN
    ```
 
-   Isso grava em `~/.codex/config.toml`:
+   Ou cole direto em `~/.codex/config.toml` (é o bloco que a tela APIs → Codex
+   mostra, já com o seu token):
 
    ```toml
    [mcp_servers.open-higgsfield-video]
    url = "https://open-higgsfield-flax-one.vercel.app/api/mcp"
-   bearer_token_env_var = "APIMART_API_KEY"
+   tool_timeout_sec = 90
+
+   [mcp_servers.open-higgsfield-video.http_headers]
+   Authorization = "Bearer ohf_cole-seu-token"
    ```
 
-3. Abra o Codex e peça um vídeo. Para conferir a conexão, rode `/mcp` dentro do Codex.
+4. Reinicie o Codex e peça um vídeo. Os vídeos aparecem no histórico do estúdio
+   para toda a equipe, marcados como “via Codex”.
 
-### Opção 2 — Instalar como plugin (com o guia de uso incluído)
+Para instalar também o guia de uso (skill), adicione o catálogo deste repositório:
 
-1. Adicione o catálogo deste repositório:
+```bash
+codex plugin marketplace add matthewportella/Open-Higgsfield-AI
+```
 
-   ```bash
-   codex plugin marketplace add matthewportella/Open-Higgsfield-AI
-   ```
-
-2. Abra o Codex, digite `/plugins`, instale **Open Higgsfield · Vídeo** e informe a
-   chave da APIMart quando o Codex pedir a conexão.
-3. Comece uma nova conversa e peça um vídeo.
-
-No aplicativo do Codex/ChatGPT: aba **Plugins** → procure **Open Higgsfield** →
-**+** → conecte com a chave da APIMart → nova conversa.
+e instale **Open Higgsfield · Vídeo** em `/plugins`.
 
 ## Dicas de uso
 

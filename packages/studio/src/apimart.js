@@ -2,6 +2,20 @@
 // same-origin proxy at /api/apimart, which adds the Bearer token upstream.
 
 const PROXY = '/api/apimart';
+
+/**
+ * `key` is the signed-in user's session: either an access token string or a
+ * function returning one (so expired tokens are refreshed before each call).
+ * The proxy reads the team's APIMart key on the server.
+ */
+async function resolveToken(key) {
+    return typeof key === 'function' ? key() : key;
+}
+
+async function authHeaders(key) {
+    const token = await resolveToken(key);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_MS = 40 * 60 * 1000; // Seedance 2.5 can queue for a long time
 const MAX_CONSECUTIVE_FAILURES = 12; // ~1 minute of unreachable status checks
@@ -56,7 +70,7 @@ function firstUrl(value) {
  * { status, progress, estimatedTime, elapsed } after every check.
  */
 export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() } = {}) {
-    if (!key) throw new Error('Adicione sua chave da APIMart em Configurações.');
+    if (!key) throw new Error('Faça login para gerar vídeos.');
     let failures = 0;
 
     while (Date.now() - startedAt < MAX_WAIT_MS) {
@@ -65,7 +79,7 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
         let response;
         try {
             response = await fetch(`${PROXY}/v1/tasks/${taskId}?language=pt`, {
-                headers: { 'x-apimart-key': key },
+                headers: await authHeaders(key),
                 cache: 'no-store',
             });
         } catch {
@@ -112,10 +126,10 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
 
 /** Submit a raw /v1/videos/generations payload; returns the APIMart task id. */
 export async function submitSeedanceTask(key, payload) {
-    if (!key) throw new Error('Adicione sua chave da APIMart em Configurações.');
+    if (!key) throw new Error('Faça login para gerar vídeos.');
     const response = await fetch(`${PROXY}/v1/videos/generations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-apimart-key': key },
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders(key)) },
         body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error(`APIMart: ${await readError(response)}`);
@@ -127,7 +141,7 @@ export async function submitSeedanceTask(key, payload) {
 
 /** Seedance 2.5 text-to-video, or image-to-video when image_url is given. */
 export async function generateSeedance25(key, params) {
-    if (!key) throw new Error('Este modelo usa a APIMart. Adicione sua chave da APIMart em Configurações.');
+    if (!key) throw new Error('Este modelo usa a APIMart. Faça login para gerar vídeos.');
 
     const payload = {
         model: 'seedance-2.5',
@@ -148,14 +162,15 @@ export async function generateSeedance25(key, params) {
 }
 
 /** Upload an image to APIMart; returns a public URL valid for 72 hours. */
-export function uploadImageToApimart(key, file, onProgress) {
+export async function uploadImageToApimart(key, file, onProgress) {
+    const token = await resolveToken(key);
     return new Promise((resolve, reject) => {
-        if (!key) { reject(new Error('Adicione sua chave da APIMart em Configurações.')); return; }
+        if (!token) { reject(new Error('Faça login para enviar imagens.')); return; }
         const formData = new FormData();
         formData.append('file', file, safeFileName(file.name || 'image.png'));
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${PROXY}/v1/uploads/images`);
-        xhr.setRequestHeader('x-apimart-key', key);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         if (onProgress) {
             xhr.upload.onprogress = (event) => {
                 if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
@@ -177,10 +192,13 @@ export function uploadImageToApimart(key, file, onProgress) {
  * when the account endpoint is unavailable. Values are in USD.
  */
 export async function getApimartBalance(key) {
-    if (!key) throw new Error('Sem chave da APIMart');
+    if (!key) throw new Error('Sem sessão');
     for (const path of ['v1/user/balance', 'v1/balance']) {
-        const response = await fetch(`${PROXY}/${path}`, { headers: { 'x-apimart-key': key }, cache: 'no-store' });
-        if (response.status === 401) throw new Error('Chave da APIMart inválida');
+        const response = await fetch(`${PROXY}/${path}`, { headers: await authHeaders(key), cache: 'no-store' });
+        if (response.status === 401 || response.status === 403 || response.status === 409) {
+            const msg = (await response.json().catch(() => ({}))).error?.message;
+            throw new Error(msg || 'Chave da APIMart inválida');
+        }
         if (!response.ok) continue;
         const data = await response.json();
         if (!data.success) continue;

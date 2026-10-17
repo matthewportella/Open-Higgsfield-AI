@@ -13,12 +13,11 @@ import {
   LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm,
 } from 'react-icons/lu';
 import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
+import { accessToken } from '@/lib/supabase/browser';
+import { useSharedHistory } from './useSharedHistory';
 
 const refreshBalance = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(BALANCE_REFRESH_EVENT)); };
 
-const JOBS_KEY = 'hf_video_jobs';
-const LEGACY_PENDING_KEY = 'apimart_pending_job';
-const MAX_JOBS = 100;
 const MODEL_ID = 'seedance-2.5';
 const MODEL_NAME = 'Seedance 2.5';
 // APIMart list prices per output second (Oct 2026); the real charge comes
@@ -35,41 +34,6 @@ const REF_LABELS = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio' };
 const ratioLabel = (r) => (r === 'adaptive' ? 'Auto' : r);
 const money = (v) => `$${v.toFixed(2)}`;
 
-function blankJob(patch) {
-  const now = Date.now();
-  return {
-    id: uid(), taskId: null, mode: 'create', prompt: '', refs: [], sourceUrl: null,
-    settings: { duration: 5, ratio: 'adaptive', resolution: '480p', audio: true, watermark: false },
-    status: 'queued', progress: 0, url: null, error: null, cost: null,
-    createdAt: now, startedAt: now, favorite: false, ...patch,
-  };
-}
-
-// The previous Video Studio kept finished videos only in memory, but saved an
-// in-flight APIMart task under this key; bring it into the new history once.
-function migrateLegacyPending(jobs) {
-  try {
-    const legacy = JSON.parse(localStorage.getItem(LEGACY_PENDING_KEY) || 'null');
-    if (!legacy?.taskId || jobs.some((j) => j.taskId === legacy.taskId)) return jobs;
-    localStorage.removeItem(LEGACY_PENDING_KEY);
-    return [blankJob({
-      taskId: legacy.taskId,
-      prompt: legacy.prompt || '',
-      settings: { duration: Number(legacy.duration) || 5, ratio: legacy.aspect_ratio || 'adaptive', resolution: '480p', audio: true, watermark: false },
-      createdAt: legacy.startedAt || Date.now(),
-      startedAt: legacy.startedAt || Date.now(),
-      imported: true,
-    }), ...jobs];
-  } catch {
-    return jobs;
-  }
-}
-
-function loadJobs() {
-  let jobs = [];
-  try { jobs = JSON.parse(localStorage.getItem(JOBS_KEY) || '[]'); } catch { jobs = []; }
-  return migrateLegacyPending(jobs);
-}
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -90,9 +54,6 @@ async function copyText(text) {
 }
 function readPref(key, fallback) {
   try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
-}
-function saveJobs(jobs) {
-  try { localStorage.setItem(JOBS_KEY, JSON.stringify(jobs.slice(0, MAX_JOBS))); } catch { /* full or blocked */ }
 }
 function uid() {
   return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
@@ -410,9 +371,10 @@ function ListItem({ job, now, handlers }) {
           </div>
         )}
         <JobMeta job={job} />
-        {typeof job.cost === 'number' && <p className="text-[11px] text-white/40">Custo: {money(job.cost)}</p>}
+        {typeof job.cost === 'number' ? <p className="text-[11px] text-white/40">Custo: {money(job.cost)}</p>
+          : typeof job.estimatedCost === 'number' ? <p className="text-[11px] text-white/40">Estimativa: {money(job.estimatedCost)}</p> : null}
         <div className="mt-auto pt-2 space-y-2">
-          <span className="block text-[11px] text-white/30">{formatDate(job.createdAt)}</span>
+          <span className="block text-[11px] text-white/30">{formatDate(job.createdAt)}{job.createdBy ? ` · ${job.createdBy.split('@')[0]}` : ''}{job.origin === 'codex' ? ' · via Codex' : ''}</span>
           <div className="flex items-center gap-1 -ml-2">
             <button type="button" onClick={() => handlers.rerun(job)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-white/60 hover:text-white hover:bg-white/5"><LuRotateCcw size={12} />Rerun</button>
             <button type="button" onClick={() => handlers.reuse(job)} aria-label="Usar estas configurações" title="Usar estas configurações" className="w-7 h-7 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/5"><LuCopy size={13} /></button>
@@ -445,7 +407,7 @@ function GridItem({ job, now, handlers, onOpen }) {
 
 /* ─────────────────────────────── main page ───────────────────────────────── */
 
-export default function VideoWorkspace({ apimartKey, onNeedKey }) {
+export default function VideoWorkspace({ email }) {
   const [tab, setTab] = useState('create'); // create | edit
   const [subTab, setSubTab] = useState('references'); // references | extend
   const [prompt, setPrompt] = useState('');
@@ -453,11 +415,10 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [settings, setSettings] = useState({ duration: 5, ratio: '9:16', resolution: '480p', audio: true, watermark: false });
   const [popover, setPopover] = useState(null);
-  // The shell only renders this after mount, so reading localStorage here is SSR-safe.
-  const [jobs, setJobs] = useState(loadJobs);
   const [view, setView] = useState(() => readPref('hf_video_view', 'list'));
   const [gridSize, setGridSize] = useState(() => Number(readPref('hf_video_grid', '220')) || 220);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [mineOnly, setMineOnly] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importValue, setImportValue] = useState('');
@@ -477,23 +438,24 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === 'error' ? 7000 : 2500);
   }, []);
 
-  useEffect(() => { saveJobs(jobs); }, [jobs]);
+  const { jobs, ready, insertJob, updateJob, removeJob } = useSharedHistory({
+    onError: (msg) => toast(msg, 'error'),
+    onMigrated: (n) => toast(`${n} vídeo${n > 1 ? 's' : ''} antigo${n > 1 ? 's' : ''} deste navegador foram salvos no histórico da equipe`),
+  });
 
-  // Links such as /studio?import=task_123 (returned by the Codex plugin) add
-  // those generations to this browser's history, then clean the address bar.
+  // Links such as /studio?import=task_123 add those generations to the history.
   useEffect(() => {
+    if (!ready) return;
     const url = new URL(window.location.href);
     const ids = url.searchParams.getAll('import').flatMap((v) => v.split(',')).map((v) => v.trim()).filter((v) => /^[A-Za-z0-9_-]{4,}$/.test(v));
     if (!ids.length) return;
-    setJobs((list) => {
-      const fresh = ids.filter((taskId) => !list.some((j) => j.taskId === taskId));
-      return [...fresh.map((taskId) => blankJob({ taskId, prompt: 'Criado pelo Codex', imported: true })), ...list];
-    });
     url.searchParams.delete('import');
     window.history.replaceState(null, '', url.pathname + url.search + url.hash);
-    toast(ids.length > 1 ? `${ids.length} vídeos adicionados ao histórico` : 'Vídeo adicionado ao histórico');
+    const fresh = ids.filter((taskId) => !jobs.some((j) => j.taskId === taskId));
+    Promise.all(fresh.map((taskId) => insertJob({ taskId, prompt: 'Vídeo importado', origin: 'import' }).catch(() => null)))
+      .then(() => toast(ids.length > 1 ? `${ids.length} vídeos no histórico` : 'Vídeo no histórico'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ready]);
   useEffect(() => { try { localStorage.setItem('hf_video_view', view); localStorage.setItem('hf_video_grid', String(gridSize)); } catch { /* ignore */ } }, [view, gridSize]);
 
   const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'processing');
@@ -503,23 +465,24 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     return () => clearInterval(t);
   }, [hasActive]);
 
-  const updateJob = useCallback((id, patch) => {
-    setJobs((list) => list.map((j) => (j.id === id ? { ...j, ...patch } : j)));
-  }, []);
-
-  // poll every unfinished job (also resumes after a reload)
+  // Poll every unfinished job (any teammate's, or Codex's) and save progress
+  // to the shared history; this also resumes after a reload.
   useEffect(() => {
-    if (!apimartKey) return;
     for (const job of jobs) {
       if (!job.taskId || polling.current.has(job.id)) continue;
       if (job.status !== 'queued' && job.status !== 'processing') continue;
       polling.current.add(job.id);
-      pollTask(apimartKey, job.taskId, {
+      let lastSaved = '';
+      pollTask(accessToken, job.taskId, {
         startedAt: job.imported ? Date.now() : job.startedAt,
-        onStatus: ({ status, progress }) => updateJob(job.id, { status: status === 'processing' ? 'processing' : 'queued', progress }),
+        onStatus: ({ status, progress }) => {
+          const next = status === 'processing' ? 'processing' : 'queued';
+          const sig = `${next}:${progress}`;
+          if (sig !== lastSaved) { lastSaved = sig; updateJob(job.id, { status: next, progress }); }
+        },
       })
         .then((res) => {
-          updateJob(job.id, { status: 'completed', url: res.url, cost: typeof res.cost === 'number' ? res.cost : job.cost, progress: 100 });
+          updateJob(job.id, { status: 'completed', url: res.url, cost: typeof res.cost === 'number' ? res.cost : job.cost, progress: 100, error: null });
           toast('Vídeo pronto!');
           refreshBalance();
         })
@@ -529,25 +492,39 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
         })
         .finally(() => polling.current.delete(job.id));
     }
-  }, [jobs, apimartKey, updateJob, toast]);
+  }, [jobs, updateJob, toast]);
 
   const cost = estimateCost(mode, settings);
   const needsSource = mode !== 'create';
   const canGenerate = prompt.trim().length > 0 && (!needsSource || /^https?:\/\//.test(sourceUrl));
 
   const startJob = useCallback(async (job) => {
-    if (!apimartKey) { onNeedKey?.(); return; }
-    const pending = { ...job, id: uid(), taskId: null, status: 'queued', progress: 0, url: null, error: null, cost: estimateCost(job.mode, job.settings), createdAt: Date.now(), startedAt: Date.now(), favorite: false };
-    setJobs((list) => [pending, ...list]);
+    let saved;
     try {
-      const taskId = await submitSeedanceTask(apimartKey, buildPayload(pending));
-      updateJob(pending.id, { taskId, startedAt: Date.now() });
+      saved = await insertJob({
+        mode: job.mode,
+        prompt: job.prompt,
+        settings: job.settings,
+        refs: job.refs,
+        sourceUrl: job.sourceUrl || null,
+        status: 'queued',
+        progress: 0,
+        estimatedCost: estimateCost(job.mode, job.settings),
+        origin: 'studio',
+      });
+    } catch (err) {
+      toast(err.message, 'error');
+      return;
+    }
+    try {
+      const taskId = await submitSeedanceTask(accessToken, buildPayload(saved));
+      await updateJob(saved.id, { taskId, startedAt: Date.now() });
       refreshBalance();
     } catch (err) {
-      updateJob(pending.id, { status: 'failed', error: err.message });
+      updateJob(saved.id, { status: 'failed', error: err.message });
       toast(err.message, 'error');
     }
-  }, [apimartKey, onNeedKey, updateJob, toast]);
+  }, [insertJob, updateJob, toast]);
 
   const generate = async () => {
     if (!canGenerate || submitting) return;
@@ -566,6 +543,11 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
   };
 
+  const confirmDelete = (job) => {
+    if (job.createdBy && job.createdBy !== email && !confirm(`Este vídeo foi criado por ${job.createdBy}. Excluir para toda a equipe?`)) return;
+    removeJob(job.id);
+  };
+
   const handlers = {
     rerun: (job) => startJob(job),
     reuse: (job) => {
@@ -577,7 +559,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
       setSourceUrl(job.sourceUrl || '');
       toast('Configurações carregadas no painel');
     },
-    remove: (job) => setJobs((list) => list.filter((j) => j.id !== job.id)),
+    remove: confirmDelete,
     bind: (job) => ({
       onFavorite: () => updateJob(job.id, { favorite: !job.favorite }),
       onCopy: async () => {
@@ -596,23 +578,27 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
           window.open(job.url, '_blank', 'noopener');
         }
       },
-      onDelete: () => setJobs((list) => list.filter((j) => j.id !== job.id)),
+      onDelete: () => confirmDelete(job),
     }),
   };
 
-  const importVideo = (e) => {
+  const importVideo = async (e) => {
     e.preventDefault();
     const value = importValue.trim();
     const label = importPrompt.trim() || 'Vídeo importado';
-    if (/^[A-Za-z0-9_-]{6,}$/.test(value)) {
-      if (!apimartKey) { onNeedKey?.(); return; }
-      if (jobs.some((j) => j.taskId === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
-      setJobs((list) => [blankJob({ taskId: value, prompt: label, imported: true }), ...list]);
-    } else if (/^https?:\/\/\S+$/.test(value)) {
-      if (jobs.some((j) => j.url === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
-      setJobs((list) => [blankJob({ status: 'completed', progress: 100, url: value, prompt: label, imported: true }), ...list]);
-    } else {
-      toast('Cole o ID da tarefa (sem espaços) ou um link https:// do vídeo', 'error');
+    try {
+      if (/^[A-Za-z0-9_-]{6,}$/.test(value)) {
+        if (jobs.some((j) => j.taskId === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
+        await insertJob({ taskId: value, prompt: label, origin: 'import' });
+      } else if (/^https?:\/\/\S+$/.test(value)) {
+        if (jobs.some((j) => j.url === value)) { toast('Esse vídeo já está no histórico', 'error'); return; }
+        await insertJob({ status: 'completed', progress: 100, url: value, prompt: label, origin: 'import' });
+      } else {
+        toast('Cole o ID da tarefa (sem espaços) ou um link https:// do vídeo', 'error');
+        return;
+      }
+    } catch (err) {
+      toast(err.message, 'error');
       return;
     }
     setImportValue('');
@@ -622,7 +608,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
     toast('Vídeo adicionado ao histórico');
   };
 
-  const visible = favoritesOnly ? jobs.filter((j) => j.favorite) : jobs;
+  const visible = jobs.filter((j) => (!favoritesOnly || j.favorite) && (!mineOnly || j.createdBy === email));
   const doneVideos = jobs.filter((j) => j.status === 'completed' && j.url);
 
   return (
@@ -673,7 +659,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
             </div>
           )}
 
-          <AddReference apimartKey={apimartKey} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
+          <AddReference apimartKey={accessToken} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
           <RefChips refs={refs} onRemove={(id) => setRefs((list) => list.filter((r) => r.id !== id))} onMention={insertMention} />
 
           {/* prompt */}
@@ -777,7 +763,6 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
             {submitting ? 'Enviando…' : 'Gerar'}
             <span className="flex items-center gap-0.5"><LuSparkles size={14} />{cost === null ? 'pela duração' : money(cost)}</span>
           </button>
-          {!apimartKey && <p className="text-[11px] text-white/40 text-center mt-2">Adicione sua chave da APIMart em Configurações.</p>}
         </div>
       </aside>
 
@@ -787,6 +772,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setFavoritesOnly(false)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] ${!favoritesOnly ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:text-white'}`}><LuHistory size={14} />Histórico</button>
             <button type="button" onClick={() => setFavoritesOnly(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] ${favoritesOnly ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:text-white'}`}><LuHeart size={14} />Favoritos</button>
+            <button type="button" onClick={() => setMineOnly(!mineOnly)} aria-pressed={mineOnly} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] ${mineOnly ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:text-white'}`}>Só meus</button>
             <button type="button" onClick={() => setShowImport(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] text-white/50 hover:text-white"><LuUpload size={14} />Importar</button>
             <button type="button" onClick={() => setShowHelp(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] text-white/50 hover:text-white"><LuCircleHelp size={14} />Como funciona</button>
           </div>
@@ -803,7 +789,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
           {visible.length === 0 ? (
             <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-center gap-3">
               <span className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center"><LuVideo size={24} className="text-white/40" /></span>
-              <p className="text-white font-semibold">{favoritesOnly ? 'Nenhum favorito ainda' : 'Seus vídeos aparecem aqui'}</p>
+              <p className="text-white font-semibold">{!ready ? 'Carregando histórico…' : favoritesOnly ? 'Nenhum favorito ainda' : 'Os vídeos da equipe aparecem aqui'}</p>
               <p className="text-sm text-white/45 max-w-sm">{favoritesOnly ? 'Toque no coração de um vídeo para guardá-lo aqui.' : 'Escreva um prompt no painel ao lado, escolha a duração e clique em Gerar.'}</p>
             </div>
           ) : view === 'list' ? (
@@ -869,7 +855,7 @@ export default function VideoWorkspace({ apimartKey, onNeedKey }) {
               <li><b className="text-white">Referências:</b> adicione imagens (envio do computador), vídeos ou áudios (link público ou um vídeo seu). Clique na referência para citá-la no prompt, por exemplo “@图片1 andando na praia”.</li>
               <li><b className="text-white">Estender vídeo:</b> escolha um vídeo seu e descreva como ele continua.</li>
               <li><b className="text-white">Editar vídeo:</b> escolha um vídeo de 4 a 30 s e descreva o que mudar. A cobrança segue a duração do vídeo original.</li>
-              <li>Você pode gerar vários vídeos ao mesmo tempo. Eles ficam salvos neste navegador e continuam mesmo se você recarregar a página.</li>
+              <li>Você pode gerar vários vídeos ao mesmo tempo. O histórico fica salvo na conta da equipe: aparece em qualquer navegador ou computador em que vocês entrarem, inclusive os vídeos criados pelo Codex.</li>
             </ol>
             <p className="text-xs text-white/40">O valor no botão é uma estimativa pelo preço da APIMart. O custo real aparece em cada vídeo quando ele termina.</p>
           </div>

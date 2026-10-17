@@ -1,9 +1,13 @@
-// Same-origin proxy for APIMart (https://api.apimart.ai). The browser cannot
-// call APIMart directly because of CORS, so the studio sends requests here and
-// this route forwards them with the user's key as a Bearer token. Only the
-// endpoints the studio needs are allowed through.
+// Same-origin proxy for APIMart (https://api.apimart.ai). The caller signs
+// in with their studio session; the team's APIMart key is read from the
+// database (encrypted) and added server-side, so it never reaches browsers.
+// Only the endpoints the studio needs are allowed through.
 
-const UPSTREAM = 'https://api.apimart.ai';
+import { requireMember, engineKey, errorResponse } from '@/lib/server/session';
+
+export const dynamic = 'force-dynamic';
+
+const UPSTREAM = process.env.APIMART_BASE_URL || 'https://api.apimart.ai';
 
 const ALLOWED = [
   { method: 'POST', pattern: /^v1\/videos\/generations$/ },
@@ -21,9 +25,12 @@ async function forward(request, { params }) {
     return Response.json({ error: { message: 'Endpoint not allowed' } }, { status: 404 });
   }
 
-  const key = request.headers.get('x-apimart-key');
-  if (!key) {
-    return Response.json({ error: { message: 'Missing APIMart API key' } }, { status: 401 });
+  let key;
+  try {
+    const { supabase } = await requireMember(request);
+    key = await engineKey(supabase, 'apimart');
+  } catch (err) {
+    return errorResponse(err);
   }
 
   const headers = { Authorization: `Bearer ${key}` };
@@ -35,6 +42,7 @@ async function forward(request, { params }) {
     method: request.method,
     headers,
     body: request.method === 'GET' ? undefined : await request.arrayBuffer(),
+    cache: 'no-store',
   });
 
   return new Response(upstream.body, {
