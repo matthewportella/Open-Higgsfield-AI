@@ -72,13 +72,17 @@ function firstUrl(value) {
 export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() } = {}) {
     if (!key) throw new Error('Faça login para gerar vídeos.');
     let failures = 0;
+    // Most models answer on the unified /v1/tasks endpoint; some (Kling V4)
+    // document /v1/videos/generations/{id}, so fall back to it if needed.
+    let path = `v1/tasks/${taskId}?language=pt`;
+    let triedFallback = false;
 
     while (Date.now() - startedAt < MAX_WAIT_MS) {
         await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
 
         let response;
         try {
-            response = await fetch(`${PROXY}/v1/tasks/${taskId}?language=pt`, {
+            response = await fetch(`${PROXY}/${path}`, {
                 headers: await authHeaders(key),
                 cache: 'no-store',
             });
@@ -88,6 +92,11 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
         }
 
         if (!response.ok) {
+            if ((response.status === 400 || response.status === 404) && !triedFallback) {
+                triedFallback = true;
+                path = `v1/videos/generations/${taskId}`;
+                continue;
+            }
             if (response.status >= 500 || response.status === 429) {
                 if (++failures >= MAX_CONSECUTIVE_FAILURES) {
                     throw new Error(`APIMart não está respondendo (${response.status}). O vídeo pode terminar mesmo assim; confira no painel da APIMart.`);
@@ -99,7 +108,8 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
         failures = 0;
 
         const body = await response.json();
-        const task = body.data || body;
+        const raw = body.data ?? body;
+        const task = Array.isArray(raw) ? raw[0] || {} : raw;
         const status = String(task.status || '').toLowerCase();
         console.debug('[APIMart] task', taskId, status, task.progress);
 
@@ -113,12 +123,13 @@ export async function pollTask(key, taskId, { onStatus, startedAt = Date.now() }
         }
 
         if (SUCCESS.has(status)) {
-            const url = firstUrl(task.result?.videos) || firstUrl(task.result?.video) || firstUrl(task.result);
+            const url = firstUrl(task.result?.videos) || firstUrl(task.result?.video) || firstUrl(task.result)
+                || firstUrl(task.video_url) || firstUrl(task.videos) || firstUrl(task.url);
             if (!url) throw new Error('APIMart: a tarefa terminou sem link de vídeo.');
             return { id: task.id || taskId, url, cost: task.cost };
         }
         if (FAILURE.has(status)) {
-            throw new Error(`APIMart: ${task.error?.message || 'a geração falhou'}`);
+            throw new Error(`APIMart: ${task.error?.message || task.fail_reason || 'a geração falhou'}`);
         }
     }
     throw new Error('APIMart: o vídeo demorou mais de 40 minutos. Confira no painel da APIMart.');

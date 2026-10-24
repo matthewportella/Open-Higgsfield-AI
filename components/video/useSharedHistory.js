@@ -15,6 +15,7 @@ export function rowToJob(row) {
   return {
     id: row.id,
     taskId: row.task_id,
+    model: row.model || 'seedance-2.5',
     mode: row.mode,
     prompt: row.prompt || '',
     settings: { duration: 5, ratio: 'adaptive', resolution: '480p', audio: true, watermark: false, ...(row.settings || {}) },

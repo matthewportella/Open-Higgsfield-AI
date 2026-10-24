@@ -15,20 +15,12 @@ import {
 import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
 import { accessToken } from '@/lib/supabase/browser';
 import { useSharedHistory } from './useSharedHistory';
+import {
+  VIDEO_MODELS, DEFAULT_MODEL_ID, getModel, modelName, normalizeSettings, filterRefs, estimateCost, buildPayload,
+} from './videoModels';
 
 const refreshBalance = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(BALANCE_REFRESH_EVENT)); };
 
-const MODEL_ID = 'seedance-2.5';
-const MODEL_NAME = 'Seedance 2.5';
-// APIMart list prices per output second (Oct 2026); the real charge comes
-// back on the finished task and replaces this estimate.
-const PRICE_PER_SECOND = { '480p': 0.096, '720p': 0.216, '1080p': 0.385 };
-const RATIOS = ['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'];
-const RESOLUTIONS = ['480p', '720p', '1080p'];
-const MIN_DURATION = 4;
-const MAX_DURATION = 30;
-const REF_LIMITS = { image: 30, video: 10, audio: 10 };
-const REF_TOKENS = { image: '@图片', video: '@视频', audio: '@音频' };
 const REF_LABELS = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio' };
 
 const ratioLabel = (r) => (r === 'adaptive' ? 'Auto' : r);
@@ -69,47 +61,6 @@ function cssRatio(r) {
   if (!r || r === 'adaptive') return '9 / 16';
   const [w, h] = r.split(':');
   return `${w} / ${h}`;
-}
-
-/** Build the APIMart payload for a job. */
-function buildPayload(job) {
-  const { mode, prompt, settings, refs } = job;
-  let { sourceUrl } = job;
-  // Older jobs may hold links with raw spaces; encode on every send so
-  // "Tentar de novo" also fixes them.
-  const images = refs.filter((r) => r.type === 'image').map((r) => safeMediaUrl(r.url));
-  const videos = refs.filter((r) => r.type === 'video').map((r) => safeMediaUrl(r.url));
-  const audios = refs.filter((r) => r.type === 'audio').map((r) => safeMediaUrl(r.url));
-  if (sourceUrl) sourceUrl = safeMediaUrl(sourceUrl);
-  const payload = {
-    model: MODEL_ID,
-    prompt,
-    resolution: settings.resolution,
-    generate_audio: settings.audio,
-    watermark: settings.watermark,
-  };
-  if (mode === 'edit') {
-    payload.omni_reference_task_type = 'edit';
-    payload.video_urls = [sourceUrl];
-    payload.size = 'adaptive';
-  } else if (mode === 'extend') {
-    payload.omni_reference_task_type = 'extend';
-    payload.video_urls = [sourceUrl, ...videos];
-    payload.size = 'adaptive';
-    payload.duration = settings.duration;
-  } else {
-    payload.size = settings.ratio;
-    payload.duration = settings.duration;
-    if (videos.length) payload.video_urls = videos;
-  }
-  if (images.length) payload.image_urls = images;
-  if (audios.length && mode !== 'edit') payload.audio_urls = audios;
-  return payload;
-}
-
-function estimateCost(mode, settings) {
-  if (mode === 'edit') return null; // billed by the source video's length
-  return PRICE_PER_SECOND[settings.resolution] * settings.duration;
 }
 
 /* ───────────────────────────── small UI pieces ───────────────────────────── */
@@ -165,7 +116,7 @@ function Toasts({ toasts, onDismiss }) {
 
 /* ─────────────────────────── reference picker ────────────────────────────── */
 
-function AddReference({ apimartKey, refs, onAdd, history, toast }) {
+function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
   const [panel, setPanel] = useState(null); // 'image' | 'video' | 'audio'
   const [url, setUrl] = useState('');
   const [uploading, setUploading] = useState(0);
@@ -173,7 +124,11 @@ function AddReference({ apimartKey, refs, onAdd, history, toast }) {
   const counts = useMemo(() => refs.reduce((acc, r) => ({ ...acc, [r.type]: (acc[r.type] || 0) + 1 }), {}), [refs]);
 
   const add = (type, refUrl, name, thumb) => {
-    if ((counts[type] || 0) >= REF_LIMITS[type]) { toast(`Limite de ${REF_LIMITS[type]} referências de ${REF_LABELS[type].toLowerCase()}.`, 'error'); return; }
+    const limit = model.refs[type] || 0;
+    if ((counts[type] || 0) >= limit) {
+      toast(limit ? `O ${model.name} aceita até ${limit} ${model.frames ? 'imagens (primeiro e último quadro)' : `referências de ${REF_LABELS[type].toLowerCase()}`}.` : `O ${model.name} não aceita ${REF_LABELS[type].toLowerCase()} de referência.`, 'error');
+      return;
+    }
     const clean = safeMediaUrl(refUrl);
     onAdd({ id: uid(), type, url: clean, name: name || clean.split('/').pop(), thumb: thumb ? safeMediaUrl(thumb) : thumb });
     setUrl('');
@@ -206,16 +161,18 @@ function AddReference({ apimartKey, refs, onAdd, history, toast }) {
             <button
               key={type}
               type="button"
+              disabled={!model.refs[type]}
+              title={!model.refs[type] ? `O ${model.name} não aceita ${REF_LABELS[type].toLowerCase()}` : undefined}
               onClick={() => setPanel(panel === type ? null : type)}
               aria-label={`Adicionar ${REF_LABELS[type].toLowerCase()}`}
-              className={`w-9 h-9 rounded-full flex items-center justify-center border transition-colors ${panel === type ? 'bg-[#d9ff00] text-black border-[#d9ff00]' : 'bg-white/[0.06] text-white/60 border-white/10 hover:text-white'}`}
+              className={`w-9 h-9 rounded-full flex items-center justify-center border transition-colors disabled:opacity-25 disabled:cursor-not-allowed ${panel === type ? 'bg-[#d9ff00] text-black border-[#d9ff00]' : 'bg-white/[0.06] text-white/60 border-white/10 hover:text-white'}`}
             >
               <Icon size={15} />
             </button>
           ))}
         </div>
-        <p className="text-sm text-white/70">{uploading ? `Enviando imagem… ${uploading}%` : 'Adicionar referências'}</p>
-        <p className="text-[11px] text-white/35">Imagem, vídeo ou áudio</p>
+        <p className="text-sm text-white/70">{uploading ? `Enviando imagem… ${uploading}%` : model.frames ? 'Adicionar quadros' : 'Adicionar referências'}</p>
+        <p className="text-[11px] text-white/35">{model.frames ? '1ª imagem = primeiro quadro · 2ª = último quadro' : 'Imagem, vídeo ou áudio'}</p>
       </div>
 
       {panel && (
@@ -261,7 +218,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast }) {
   );
 }
 
-function RefChips({ refs, onRemove, onMention }) {
+function RefChips({ refs, onRemove, onMention, model }) {
   if (!refs.length) return null;
   const index = { image: 0, video: 0, audio: 0 };
   return (
@@ -275,9 +232,13 @@ function RefChips({ refs, onRemove, onMention }) {
             {r.type === 'image' && r.thumb
               ? <img src={r.thumb} alt="" className="w-6 h-6 rounded object-cover" />
               : <span className="w-6 h-6 rounded bg-white/10 flex items-center justify-center"><Icon size={12} className="text-white/60" /></span>}
-            <button type="button" onClick={() => onMention(`${REF_TOKENS[r.type]}${n}`)} title="Inserir no prompt" className="text-[11px] text-white/80 hover:text-[#d9ff00]">
-              {REF_LABELS[r.type]} {n}
-            </button>
+            {model.frames ? (
+              <span className="text-[11px] text-white/80">{n === 1 ? 'Primeiro quadro' : 'Último quadro'}</span>
+            ) : (
+              <button type="button" onClick={() => onMention(`${model.tokens[r.type]}${n}`)} title="Inserir no prompt" className="text-[11px] text-white/80 hover:text-[#d9ff00]">
+                {REF_LABELS[r.type]} {n}
+              </button>
+            )}
             <button type="button" onClick={() => onRemove(r.id)} aria-label={`Remover ${REF_LABELS[r.type]} ${n}`} className="text-white/30 hover:text-white"><LuX size={11} /></button>
           </div>
         );
@@ -363,7 +324,7 @@ function ListItem({ job, now, handlers }) {
         )}
       </div>
       <div className="rounded-2xl bg-[#111113] border border-white/[0.05] p-4 flex flex-col gap-3 min-h-[160px]">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-white"><LuChartNoAxesColumn size={13} className="text-[#d9ff00]" />{MODEL_NAME}{job.mode !== 'create' && <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-white/60">{job.mode === 'edit' ? 'Edição' : 'Extensão'}</span>}</div>
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white"><LuChartNoAxesColumn size={13} className="text-[#d9ff00]" />{modelName(job.model)}{job.mode !== 'create' && <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-white/60">{job.mode === 'edit' ? 'Edição' : 'Extensão'}</span>}</div>
         <p className="text-[13px] leading-snug text-white/60 uppercase line-clamp-6 break-words">{job.prompt}</p>
         {job.refs.some((r) => r.type === 'image' && r.thumb) && (
           <div className="flex gap-1.5">
@@ -413,7 +374,9 @@ export default function VideoWorkspace({ email }) {
   const [prompt, setPrompt] = useState('');
   const [refs, setRefs] = useState([]);
   const [sourceUrl, setSourceUrl] = useState('');
-  const [settings, setSettings] = useState({ duration: 5, ratio: '9:16', resolution: '480p', audio: true, watermark: false });
+  const [modelId, setModelId] = useState(() => getModel(readPref('hf_video_model', DEFAULT_MODEL_ID)).id);
+  const model = getModel(modelId);
+  const [settings, setSettings] = useState(() => normalizeSettings(getModel(readPref('hf_video_model', DEFAULT_MODEL_ID)), { duration: 5, ratio: '9:16', resolution: '480p', audio: true, watermark: false }));
   const [popover, setPopover] = useState(null);
   const [view, setView] = useState(() => readPref('hf_video_view', 'list'));
   const [gridSize, setGridSize] = useState(() => Number(readPref('hf_video_grid', '220')) || 220);
@@ -430,7 +393,19 @@ export default function VideoWorkspace({ email }) {
   const promptRef = useRef(null);
   const polling = useRef(new Set());
 
-  const mode = tab === 'edit' ? 'edit' : subTab === 'extend' ? 'extend' : 'create';
+  const canEdit = model.modes.includes('edit');
+  const canExtend = model.modes.includes('extend');
+  const mode = tab === 'edit' && canEdit ? 'edit' : subTab === 'extend' && canExtend ? 'extend' : 'create';
+
+  const chooseModel = (id) => {
+    const next = getModel(id);
+    setModelId(next.id);
+    setSettings((s) => normalizeSettings(next, s));
+    setRefs((list) => filterRefs(next, list));
+    if (!next.modes.includes('edit')) setTab('create');
+    if (!next.modes.includes('extend')) setSubTab('references');
+    try { localStorage.setItem('hf_video_model', next.id); } catch { /* ignore */ }
+  };
 
   const toast = useCallback((text, tone = 'ok') => {
     const id = uid();
@@ -494,7 +469,7 @@ export default function VideoWorkspace({ email }) {
     }
   }, [jobs, updateJob, toast]);
 
-  const cost = estimateCost(mode, settings);
+  const cost = estimateCost(model, mode, settings);
   const needsSource = mode !== 'create';
   const canGenerate = prompt.trim().length > 0 && (!needsSource || /^https?:\/\//.test(sourceUrl));
 
@@ -509,7 +484,8 @@ export default function VideoWorkspace({ email }) {
         sourceUrl: job.sourceUrl || null,
         status: 'queued',
         progress: 0,
-        estimatedCost: estimateCost(job.mode, job.settings),
+        estimatedCost: estimateCost(getModel(job.model), job.mode, job.settings),
+        model: getModel(job.model).id,
         origin: 'studio',
       });
     } catch (err) {
@@ -529,7 +505,7 @@ export default function VideoWorkspace({ email }) {
   const generate = async () => {
     if (!canGenerate || submitting) return;
     setSubmitting(true);
-    await startJob({ mode, prompt: prompt.trim(), settings: { ...settings }, refs, sourceUrl: needsSource ? sourceUrl : null });
+    await startJob({ model: model.id, mode, prompt: prompt.trim(), settings: { ...settings }, refs, sourceUrl: needsSource ? sourceUrl : null });
     setSubmitting(false);
   };
 
@@ -551,6 +527,7 @@ export default function VideoWorkspace({ email }) {
   const handlers = {
     rerun: (job) => startJob(job),
     reuse: (job) => {
+      chooseModel(job.model || DEFAULT_MODEL_ID);
       setPrompt(job.prompt);
       setSettings({ ...job.settings });
       setRefs(job.refs);
@@ -619,7 +596,7 @@ export default function VideoWorkspace({ email }) {
       {/* ───────── left panel ───────── */}
       <aside className="lg:w-[300px] flex-shrink-0 flex flex-col lg:min-h-0 border-b lg:border-b-0 lg:border-r border-white/[0.06] bg-[#0a0a0b]">
         <div className="flex items-center gap-4 px-4 pt-3 border-b border-white/[0.06]">
-          {[['create', 'Criar vídeo'], ['edit', 'Editar vídeo']].map(([id, label]) => (
+          {[['create', 'Criar vídeo'], ...(canEdit ? [['edit', 'Editar vídeo']] : [])].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setTab(id)} className={`pb-2.5 text-[13px] font-semibold border-b-2 transition-colors ${tab === id ? 'text-white border-white' : 'text-white/45 border-transparent hover:text-white/80'}`}>{label}</button>
           ))}
         </div>
@@ -629,10 +606,10 @@ export default function VideoWorkspace({ email }) {
           <div className="relative h-24 rounded-2xl overflow-hidden bg-[radial-gradient(120%_120%_at_20%_0%,#3b4a10_0%,#141a05_45%,#0a0a0b_100%)] border border-white/[0.06] p-3 flex flex-col justify-end">
             <LuFilm className="absolute top-3 right-3 text-[#d9ff00]/60" size={20} />
             <p className="text-lg font-black text-[#d9ff00] leading-none uppercase">{mode === 'edit' ? 'Edição' : mode === 'extend' ? 'Extensão' : 'Geral'}</p>
-            <p className="text-[11px] text-white/60 mt-1">{MODEL_NAME} · APIMart</p>
+            <p className="text-[11px] text-white/60 mt-1">{model.name} · APIMart</p>
           </div>
 
-          {tab === 'create' && (
+          {tab === 'create' && canExtend && (
             <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-white/[0.04]">
               {[['references', 'Referências'], ['extend', 'Estender vídeo']].map(([id, label]) => (
                 <button key={id} type="button" onClick={() => setSubTab(id)} className={`py-2 rounded-lg text-xs font-semibold transition-colors ${subTab === id ? 'bg-white/[0.1] text-white' : 'text-white/45 hover:text-white/80'}`}>{label}</button>
@@ -642,7 +619,7 @@ export default function VideoWorkspace({ email }) {
 
           {needsSource && (
             <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3 space-y-2">
-              <p className="text-xs font-semibold text-white/70">{mode === 'edit' ? 'Vídeo para editar (4 a 30 s)' : 'Vídeo para estender'}</p>
+              <p className="text-xs font-semibold text-white/70">{mode === 'edit' ? `Vídeo para editar (${model.id === 'kling-v4' ? '3' : '4'} a 30 s)` : 'Vídeo para estender'}</p>
               {doneVideos.length > 0 && (
                 <div className="grid grid-cols-4 gap-1.5">
                   {doneVideos.slice(0, 8).map((j) => (
@@ -659,8 +636,8 @@ export default function VideoWorkspace({ email }) {
             </div>
           )}
 
-          <AddReference apimartKey={accessToken} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
-          <RefChips refs={refs} onRemove={(id) => setRefs((list) => list.filter((r) => r.id !== id))} onMention={insertMention} />
+          <AddReference key={model.id} model={model} apimartKey={accessToken} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
+          <RefChips model={model} refs={refs} onRemove={(id) => setRefs((list) => list.filter((r) => r.id !== id))} onMention={insertMention} />
 
           {/* prompt */}
           <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3">
@@ -678,9 +655,13 @@ export default function VideoWorkspace({ email }) {
             />
             <div className="flex items-center gap-3 pt-1">
               <button type="button" onClick={() => refs.length ? toast('Clique numa referência acima para inseri-la no prompt') : toast('Adicione uma referência para citá-la no prompt')} className="flex items-center gap-1 text-[11px] text-white/55 hover:text-white"><LuAtSign size={12} />Elementos</button>
-              <button type="button" onClick={() => setSettings((s) => ({ ...s, audio: !s.audio }))} aria-pressed={settings.audio} className="flex items-center gap-1 text-[11px] text-white/55 hover:text-white">
-                {settings.audio ? <LuVolume2 size={12} /> : <LuVolumeX size={12} />}{settings.audio ? 'Som ligado' : 'Sem som'}
-              </button>
+              {model.audio === 'always' ? (
+                <span className="flex items-center gap-1 text-[11px] text-white/45"><LuVolume2 size={12} />Som sempre ligado</span>
+              ) : (
+                <button type="button" onClick={() => setSettings((s) => ({ ...s, audio: !s.audio }))} aria-pressed={settings.audio} className="flex items-center gap-1 text-[11px] text-white/55 hover:text-white">
+                  {settings.audio ? <LuVolume2 size={12} /> : <LuVolumeX size={12} />}{settings.audio ? 'Som ligado' : 'Sem som'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -689,18 +670,21 @@ export default function VideoWorkspace({ email }) {
             <button type="button" onClick={() => setPopover(popover === 'model' ? null : 'model')} className="w-full flex items-center justify-between rounded-2xl bg-white/[0.03] border border-white/[0.06] px-3 py-2.5 hover:bg-white/[0.05]">
               <span className="text-left">
                 <span className="block text-[11px] text-white/45">Modelo</span>
-                <span className="flex items-center gap-1.5 text-sm font-semibold text-white">{MODEL_NAME}<LuChartNoAxesColumn size={13} className="text-[#d9ff00]" /></span>
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-white">{model.name}<LuChartNoAxesColumn size={13} className="text-[#d9ff00]" /></span>
               </span>
               <LuChevronRight size={16} className="text-white/40" />
             </button>
-            <Popover open={popover === 'model'} onClose={() => setPopover(null)} className="w-full">
-              <div className="flex items-start gap-3 p-2 rounded-xl bg-white/[0.05]">
-                <span className="w-9 h-9 rounded-lg bg-[#d9ff00] text-black flex items-center justify-center flex-shrink-0"><LuFilm size={16} /></span>
-                <div>
-                  <p className="text-sm font-semibold text-white flex items-center gap-1.5">{MODEL_NAME}<LuCheck size={13} className="text-[#d9ff00]" /></p>
-                  <p className="text-[11px] text-white/45 leading-snug">ByteDance · 4 a 30 s · 480p a 1080p · até 30 imagens, 10 vídeos e 10 áudios de referência</p>
-                </div>
-              </div>
+            <Popover open={popover === 'model'} onClose={() => setPopover(null)} className="w-full space-y-1">
+              <p className="text-xs font-semibold text-white mb-1 px-1">Modelo de vídeo</p>
+              {VIDEO_MODELS.map((m) => (
+                <button key={m.id} type="button" onClick={() => { chooseModel(m.id); setPopover(null); }} className={`w-full flex items-start gap-3 p-2 rounded-xl text-left ${m.id === model.id ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}>
+                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${m.id === model.id ? 'bg-[#d9ff00] text-black' : 'bg-white/[0.06] text-white/60'}`}><LuFilm size={16} /></span>
+                  <span className="min-w-0">
+                    <span className="text-sm font-semibold text-white flex items-center gap-1.5">{m.name}{m.id === model.id && <LuCheck size={13} className="text-[#d9ff00]" />}</span>
+                    <span className="block text-[11px] text-white/45 leading-snug">{m.vendor} · {m.summary}</span>
+                  </span>
+                </button>
+              ))}
             </Popover>
           </div>
 
@@ -712,11 +696,21 @@ export default function VideoWorkspace({ email }) {
               </button>
               <Popover open={popover === 'duration'} onClose={() => setPopover(null)} className="w-[268px]">
                 <p className="text-xs font-semibold text-white mb-2">Escolha a duração</p>
-                <div className="flex items-center gap-3">
-                  <input type="range" min={MIN_DURATION} max={MAX_DURATION} step={1} value={settings.duration} onChange={(e) => setSettings((s) => ({ ...s, duration: Number(e.target.value) }))} aria-label="Duração em segundos" className="flex-1 accent-[#d9ff00] cursor-pointer" />
-                  <input type="number" min={MIN_DURATION} max={MAX_DURATION} value={settings.duration} onChange={(e) => setSettings((s) => ({ ...s, duration: Math.min(MAX_DURATION, Math.max(MIN_DURATION, Number(e.target.value) || MIN_DURATION)) }))} aria-label="Segundos" className="w-14 bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-sm text-white text-center tabular-nums outline-none" />
-                </div>
-                <div className="flex justify-between text-[10px] text-white/35 mt-1"><span>{MIN_DURATION}s</span><span>{MAX_DURATION}s</span></div>
+                {model.durations.options ? (
+                  <div className="flex gap-2">
+                    {model.durations.options.map((d) => (
+                      <button key={d} type="button" onClick={() => { setSettings((s) => ({ ...s, duration: d })); setPopover(null); }} className={`flex-1 py-2 rounded-lg text-sm font-semibold ${settings.duration === d ? 'bg-[#d9ff00] text-black' : 'bg-white/[0.06] text-white hover:bg-white/10'}`}>{d}s</button>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <input type="range" min={model.durations.min} max={model.durations.max} step={1} value={settings.duration} onChange={(e) => setSettings((s) => ({ ...s, duration: Number(e.target.value) }))} aria-label="Duração em segundos" className="flex-1 accent-[#d9ff00] cursor-pointer" />
+                      <input type="number" min={model.durations.min} max={model.durations.max} value={settings.duration} onChange={(e) => setSettings((s) => ({ ...s, duration: Math.min(model.durations.max, Math.max(model.durations.min, Number(e.target.value) || model.durations.min)) }))} aria-label="Segundos" className="w-14 bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-sm text-white text-center tabular-nums outline-none" />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-white/35 mt-1"><span>{model.durations.min}s</span><span>{model.durations.max}s</span></div>
+                  </>
+                )}
               </Popover>
             </div>
             <div className="relative">
@@ -725,7 +719,7 @@ export default function VideoWorkspace({ email }) {
               </button>
               <Popover open={popover === 'ratio'} onClose={() => setPopover(null)} className="w-44">
                 <p className="text-xs font-semibold text-white mb-2">Proporção</p>
-                {RATIOS.map((r) => (
+                {model.ratios.map((r) => (
                   <button key={r} type="button" onClick={() => { setSettings((s) => ({ ...s, ratio: r })); setPopover(null); }} className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-[13px] text-white/80 hover:bg-white/5">
                     {ratioLabel(r)}{settings.ratio === r && <LuCheck size={13} className="text-[#d9ff00]" />}
                   </button>
@@ -738,19 +732,21 @@ export default function VideoWorkspace({ email }) {
               </button>
               <Popover open={popover === 'res'} onClose={() => setPopover(null)} className="w-44 !left-auto right-0">
                 <p className="text-xs font-semibold text-white mb-2">Resolução</p>
-                {RESOLUTIONS.map((r) => (
+                {model.resolutions.map((r) => (
                   <button key={r} type="button" onClick={() => { setSettings((s) => ({ ...s, resolution: r })); setPopover(null); }} className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-[13px] text-white/80 hover:bg-white/5">
-                    <span>{r} <span className="text-white/35 text-[11px]">· {money(PRICE_PER_SECOND[r])}/s</span></span>{settings.resolution === r && <LuCheck size={13} className="text-[#d9ff00]" />}
+                    <span>{r} <span className="text-white/35 text-[11px]">· {model.priceFrom ? 'a partir de ' : ''}{money(model.price[r])}/s</span></span>{settings.resolution === r && <LuCheck size={13} className="text-[#d9ff00]" />}
                   </button>
                 ))}
               </Popover>
             </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-2xl bg-white/[0.03] border border-white/[0.06] px-3 py-2.5">
-            <span className="flex items-center gap-2 text-[13px] text-white"><LuStamp size={14} className="text-white/50" />Marca d'água “IA”</span>
-            <Toggle checked={settings.watermark} onChange={(v) => setSettings((s) => ({ ...s, watermark: v }))} label="Marca d'água" />
-          </div>
+          {model.watermark && (
+            <div className="flex items-center justify-between rounded-2xl bg-white/[0.03] border border-white/[0.06] px-3 py-2.5">
+              <span className="flex items-center gap-2 text-[13px] text-white"><LuStamp size={14} className="text-white/50" />Marca d'água “IA”</span>
+              <Toggle checked={settings.watermark} onChange={(v) => setSettings((s) => ({ ...s, watermark: v }))} label="Marca d'água" />
+            </div>
+          )}
         </div>
 
         <div className="p-3 border-t border-white/[0.06] sticky bottom-0 z-20 bg-[#0a0a0b] lg:static">
@@ -808,7 +804,7 @@ export default function VideoWorkspace({ email }) {
           <div className="relative max-w-5xl w-full flex flex-col lg:flex-row gap-4" onClick={(e) => e.stopPropagation()}>
             <video src={lightbox.url} controls autoPlay playsInline className="max-h-[80vh] w-auto mx-auto rounded-xl bg-black" />
             <div className="lg:w-64 space-y-3">
-              <p className="text-sm font-semibold text-white">{MODEL_NAME}</p>
+              <p className="text-sm font-semibold text-white">{modelName(lightbox.model)}</p>
               <p className="text-xs text-white/60 uppercase max-h-60 overflow-y-auto custom-scrollbar">{lightbox.prompt}</p>
               <JobMeta job={lightbox} />
               <div className="flex gap-2">
@@ -851,7 +847,7 @@ export default function VideoWorkspace({ email }) {
               <button type="button" onClick={() => setShowHelp(false)} aria-label="Fechar" className="text-white/50 hover:text-white"><LuX size={18} /></button>
             </div>
             <ol className="space-y-3 text-sm text-white/70 list-decimal pl-5">
-              <li><b className="text-white">Criar vídeo:</b> escreva o prompt, escolha duração (4 a 30 s), proporção e resolução e clique em Gerar.</li>
+              <li><b className="text-white">Criar vídeo:</b> escolha o modelo (Seedance 2.5, Kling V4 ou Veo 3.1), escreva o prompt, ajuste duração, proporção e resolução e clique em Gerar.</li>
               <li><b className="text-white">Referências:</b> adicione imagens (envio do computador), vídeos ou áudios (link público ou um vídeo seu). Clique na referência para citá-la no prompt, por exemplo “@图片1 andando na praia”.</li>
               <li><b className="text-white">Estender vídeo:</b> escolha um vídeo seu e descreva como ele continua.</li>
               <li><b className="text-white">Editar vídeo:</b> escolha um vídeo de 4 a 30 s e descreva o que mudar. A cobrança segue a duração do vídeo original.</li>
