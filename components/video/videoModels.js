@@ -73,6 +73,48 @@ export const VIDEO_MODELS = [
   },
 ];
 
+// Motion control / video-to-video models: take a source video and swap the
+// character (from an image) or the scene/look (from a prompt + images).
+export const MOTION_MODELS = [
+  {
+    id: 'kling-v3-motion-control',
+    name: 'Kling 3.0 Motion Control',
+    vendor: 'Kuaishou',
+    summary: 'Seu personagem (foto) repete o movimento do vídeo · vídeo de 3 a 30 s',
+    kind: 'motion',
+    price: { std: 0.1029, pro: 0.18 },
+  },
+  {
+    id: 'kling-v2-6-motion-control',
+    name: 'Kling 2.6 Motion Control',
+    vendor: 'Kuaishou',
+    summary: 'Mesmo recurso, mais barato · vídeo de 3 a 30 s',
+    kind: 'motion',
+    price: { std: 0.0571, pro: 0.1 },
+  },
+  {
+    id: 'wan2.7-videoedit',
+    name: 'Wan 2.7 Video Edit',
+    vendor: 'Alibaba',
+    summary: 'Troca personagem, roupa ou cenário pelo prompt e até 4 imagens · vídeo de 2 a 10 s',
+    kind: 'edit',
+    price: { '720P': 0.0664, '1080P': 0.0996 },
+  },
+];
+
+export function getMotionModel(id) {
+  return MOTION_MODELS.find((m) => m.id === id) || MOTION_MODELS[0];
+}
+
+/** Estimated cost from the source video's length (APIMart bills that length). */
+export function estimateMotionCost(motionModel, settings, videoSeconds) {
+  if (!videoSeconds) return null;
+  const key = motionModel.kind === 'motion' ? settings.quality : settings.resolution;
+  const rate = motionModel.price[key] || Object.values(motionModel.price)[0];
+  const seconds = motionModel.kind === 'edit' && settings.duration ? Math.min(settings.duration, videoSeconds) : videoSeconds;
+  return rate * Math.ceil(seconds);
+}
+
 export const DEFAULT_MODEL_ID = 'seedance-2.5';
 
 export function getModel(id) {
@@ -80,7 +122,7 @@ export function getModel(id) {
 }
 
 export function modelName(id) {
-  return VIDEO_MODELS.find((m) => m.id === id)?.name || id || 'Seedance 2.5';
+  return [...VIDEO_MODELS, ...MOTION_MODELS].find((m) => m.id === id)?.name || id || 'Seedance 2.5';
 }
 
 function nearest(options, value) {
@@ -195,8 +237,39 @@ function veoPayload({ prompt, settings, refs }, modelId) {
   return payload;
 }
 
+function motionPayload({ prompt, settings, refs, sourceUrl }, modelId) {
+  const { images } = split(refs);
+  const payload = {
+    model: modelId,
+    image_url: images[0],
+    video_url: safeMediaUrl(sourceUrl),
+    character_orientation: settings.orientation === 'image' ? 'image' : 'video',
+    mode: settings.quality === 'pro' ? 'pro' : 'std',
+    keep_original_sound: settings.keepSound === false ? 'no' : 'yes',
+  };
+  if (prompt) payload.prompt = prompt;
+  return payload;
+}
+
+function wanEditPayload({ prompt, settings, refs, sourceUrl }) {
+  const { images } = split(refs);
+  const payload = {
+    model: 'wan2.7-videoedit',
+    video_urls: [safeMediaUrl(sourceUrl)],
+    resolution: settings.resolution === '720P' ? '720P' : '1080P',
+    duration: 0, // keep the whole source video
+    metadata: { audio_setting: settings.keepSound === false ? 'auto' : 'origin' },
+  };
+  if (prompt) payload.prompt = prompt;
+  if (images.length) payload.image_urls = images.slice(0, 4);
+  if (settings.ratio && settings.ratio !== 'adaptive') payload.size = settings.ratio;
+  return payload;
+}
+
 /** APIMart payload for a studio job (job.model decides the format). */
 export function buildPayload(job) {
+  if (job.model === 'wan2.7-videoedit') return wanEditPayload(job);
+  if (MOTION_MODELS.some((m) => m.id === job.model)) return motionPayload(job, job.model);
   const model = getModel(job.model);
   if (model.id === 'kling-v4') return klingPayload(job);
   if (model.id.startsWith('veo3.1')) return veoPayload(job, model.id);

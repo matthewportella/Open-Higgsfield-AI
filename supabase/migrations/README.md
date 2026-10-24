@@ -12,6 +12,8 @@ pelo painel/MCP do Supabase com estes nomes:
    `is_owner` e `current_email`.
 3. `auto_confirm_invited_signups` — e-mails convidados entram já confirmados,
    sem depender do link do e-mail de confirmação.
+4. `media_uploads_bucket` — bucket público `media` (até 50 MB por arquivo) para
+   vídeos, áudios e imagens de referência; só membros enviam ou apagam.
 
 Configuração de Auth (painel do Supabase → Authentication → URL Configuration):
 Site URL = `https://open-higgsfield-flax-one.vercel.app` e Redirect URL

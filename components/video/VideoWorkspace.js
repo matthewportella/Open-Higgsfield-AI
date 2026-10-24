@@ -13,8 +13,9 @@ import {
   LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm,
 } from 'react-icons/lu';
 import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
-import { accessToken } from '@/lib/supabase/browser';
+import { accessToken, uploadToStorage } from '@/lib/supabase/browser';
 import { useSharedHistory } from './useSharedHistory';
+import MotionPanel from './MotionPanel';
 import {
   VIDEO_MODELS, DEFAULT_MODEL_ID, getModel, modelName, normalizeSettings, filterRefs, estimateCost, buildPayload,
 } from './videoModels';
@@ -152,6 +153,23 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
   };
 
   const doneVideos = history.filter((j) => j.status === 'completed' && j.url).slice(0, 12);
+  const mediaRef = useRef(null);
+
+  // Video and audio references go to the team's storage to get a public link.
+  const onMediaFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !panel) return;
+    try {
+      setUploading(1);
+      const url = await uploadToStorage(file);
+      add(panel, url, file.name);
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setUploading(0);
+    }
+  };
 
   return (
     <div className="relative">
@@ -171,7 +189,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
             </button>
           ))}
         </div>
-        <p className="text-sm text-white/70">{uploading ? `Enviando imagem… ${uploading}%` : model.frames ? 'Adicionar quadros' : 'Adicionar referências'}</p>
+        <p className="text-sm text-white/70">{uploading ? `Enviando… ${uploading > 1 ? `${uploading}%` : ''}` : model.frames ? 'Adicionar quadros' : 'Adicionar referências'}</p>
         <p className="text-[11px] text-white/35">{model.frames ? '1ª imagem = primeiro quadro · 2ª = último quadro' : 'Imagem, vídeo ou áudio'}</p>
       </div>
 
@@ -186,6 +204,14 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
               <button type="button" disabled={Boolean(uploading)} onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-sm text-white disabled:opacity-50">
                 <LuUpload size={14} /> Enviar do computador
+              </button>
+            </>
+          )}
+          {panel !== 'image' && (
+            <>
+              <input ref={mediaRef} type="file" accept={panel === 'video' ? 'video/mp4,video/quicktime,video/webm' : 'audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/aac'} className="hidden" onChange={onMediaFile} />
+              <button type="button" disabled={Boolean(uploading)} onClick={() => mediaRef.current?.click()} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-sm text-white disabled:opacity-50">
+                <LuUpload size={14} /> {uploading ? 'Enviando…' : 'Enviar do computador'}
               </button>
             </>
           )}
@@ -211,7 +237,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
             </div>
             <button type="submit" className="px-3 rounded-xl bg-[#d9ff00] text-black text-xs font-bold">Adicionar</button>
           </form>
-          {panel !== 'image' && <p className="text-[10px] text-white/35 leading-snug">{panel === 'video' ? 'Vídeos de 2 a 30 s, até 30 s no total.' : 'Áudios de 2 a 30 s, até 30 s no total.'} A APIMart só aceita links públicos para vídeo e áudio.</p>}
+          {panel !== 'image' && <p className="text-[10px] text-white/35 leading-snug">{panel === 'video' ? 'Vídeos de 2 a 30 s, até 30 s no total.' : 'Áudios de 2 a 30 s, até 30 s no total.'} Arquivos de até 50 MB.</p>}
         </div>
       )}
     </div>
@@ -324,7 +350,7 @@ function ListItem({ job, now, handlers }) {
         )}
       </div>
       <div className="rounded-2xl bg-[#111113] border border-white/[0.05] p-4 flex flex-col gap-3 min-h-[160px]">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-white"><LuChartNoAxesColumn size={13} className="text-[#d9ff00]" />{modelName(job.model)}{job.mode !== 'create' && <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-white/60">{job.mode === 'edit' ? 'Edição' : 'Extensão'}</span>}</div>
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white"><LuChartNoAxesColumn size={13} className="text-[#d9ff00]" />{modelName(job.model)}{job.mode !== 'create' && <span className="ml-1 px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-white/60">{job.settings?.task === 'motion' ? 'Motion Control' : job.mode === 'edit' ? 'Edição' : 'Extensão'}</span>}</div>
         <p className="text-[13px] leading-snug text-white/60 uppercase line-clamp-6 break-words">{job.prompt}</p>
         {job.refs.some((r) => r.type === 'image' && r.thumb) && (
           <div className="flex gap-1.5">
@@ -395,14 +421,14 @@ export default function VideoWorkspace({ email }) {
 
   const canEdit = model.modes.includes('edit');
   const canExtend = model.modes.includes('extend');
-  const mode = tab === 'edit' && canEdit ? 'edit' : subTab === 'extend' && canExtend ? 'extend' : 'create';
+  const mode = tab === 'edit' && canEdit ? 'edit' : tab === 'create' && subTab === 'extend' && canExtend ? 'extend' : 'create';
 
   const chooseModel = (id) => {
     const next = getModel(id);
     setModelId(next.id);
     setSettings((s) => normalizeSettings(next, s));
     setRefs((list) => filterRefs(next, list));
-    if (!next.modes.includes('edit')) setTab('create');
+    if (!next.modes.includes('edit')) setTab((t) => (t === 'edit' ? 'create' : t));
     if (!next.modes.includes('extend')) setSubTab('references');
     try { localStorage.setItem('hf_video_model', next.id); } catch { /* ignore */ }
   };
@@ -484,8 +510,8 @@ export default function VideoWorkspace({ email }) {
         sourceUrl: job.sourceUrl || null,
         status: 'queued',
         progress: 0,
-        estimatedCost: estimateCost(getModel(job.model), job.mode, job.settings),
-        model: getModel(job.model).id,
+        estimatedCost: job.estimatedCost ?? estimateCost(getModel(job.model), job.mode, job.settings),
+        model: job.model || DEFAULT_MODEL_ID,
         origin: 'studio',
       });
     } catch (err) {
@@ -527,6 +553,7 @@ export default function VideoWorkspace({ email }) {
   const handlers = {
     rerun: (job) => startJob(job),
     reuse: (job) => {
+      if (job.settings?.task === 'motion') { setTab('motion'); toast('Abra o vídeo e a foto de novo no Motion Control, ou use Rerun para repetir igual'); return; }
       chooseModel(job.model || DEFAULT_MODEL_ID);
       setPrompt(job.prompt);
       setSettings({ ...job.settings });
@@ -595,12 +622,16 @@ export default function VideoWorkspace({ email }) {
 
       {/* ───────── left panel ───────── */}
       <aside className="lg:w-[300px] flex-shrink-0 flex flex-col lg:min-h-0 border-b lg:border-b-0 lg:border-r border-white/[0.06] bg-[#0a0a0b]">
-        <div className="flex items-center gap-4 px-4 pt-3 border-b border-white/[0.06]">
-          {[['create', 'Criar vídeo'], ...(canEdit ? [['edit', 'Editar vídeo']] : [])].map(([id, label]) => (
-            <button key={id} type="button" onClick={() => setTab(id)} className={`pb-2.5 text-[13px] font-semibold border-b-2 transition-colors ${tab === id ? 'text-white border-white' : 'text-white/45 border-transparent hover:text-white/80'}`}>{label}</button>
+        <div className="flex items-center gap-3 px-3 pt-3 border-b border-white/[0.06] overflow-x-auto no-scrollbar">
+          {[['create', 'Criar vídeo'], ...(canEdit ? [['edit', 'Editar vídeo']] : []), ['motion', 'Motion Control']].map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setTab(id)} className={`pb-2.5 text-[12px] font-semibold whitespace-nowrap border-b-2 transition-colors ${tab === id ? 'text-white border-white' : 'text-white/45 border-transparent hover:text-white/80'}`}>{label}</button>
           ))}
         </div>
 
+        {tab === 'motion' ? (
+          <MotionPanel doneVideos={doneVideos} toast={toast} onGenerate={startJob} />
+        ) : (
+          <>
         <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto custom-scrollbar p-3 space-y-3">
           {/* model card */}
           <div className="relative h-24 rounded-2xl overflow-hidden bg-[radial-gradient(120%_120%_at_20%_0%,#3b4a10_0%,#141a05_45%,#0a0a0b_100%)] border border-white/[0.06] p-3 flex flex-col justify-end">
@@ -760,6 +791,8 @@ export default function VideoWorkspace({ email }) {
             <span className="flex items-center gap-0.5"><LuSparkles size={14} />{cost === null ? 'pela duração' : money(cost)}</span>
           </button>
         </div>
+          </>
+        )}
       </aside>
 
       {/* ───────── feed ───────── */}
