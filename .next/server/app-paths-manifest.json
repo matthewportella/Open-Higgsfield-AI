@@ -1,0 +1,11 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/mcp/route": "app/api/mcp/route.js",
+  "/api/engines/route": "app/api/engines/route.js",
+  "/api/apimart/[...path]/route": "app/api/apimart/[...path]/route.js",
+  "/api/engines/muapi/key/route": "app/api/engines/muapi/key/route.js",
+  "/api/tokens/route": "app/api/tokens/route.js",
+  "/api/media/persist/route": "app/api/media/persist/route.js",
+  "/page": "app/page.js",
+  "/studio/page": "app/studio/page.js"
+}

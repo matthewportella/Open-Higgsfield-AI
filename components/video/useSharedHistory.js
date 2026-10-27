@@ -8,6 +8,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase/browser';
 
 const PAGE_SIZE = 300;
+const COLUMNS = 'id, task_id, model, mode, prompt, settings, refs, source_url, status, progress, url, thumb_url, media_expired, cost, estimated_cost, error, favorite, origin, created_by_email, created_at, started_at';
+const CACHE_KEY = 'ohf_history_cache_v1';
 const LEGACY_JOBS_KEY = 'hf_video_jobs';
 const LEGACY_PENDING_KEY = 'apimart_pending_job';
 
@@ -24,6 +26,8 @@ export function rowToJob(row) {
     status: row.status,
     progress: row.progress || 0,
     url: row.url,
+    thumbUrl: row.thumb_url || null,
+    mediaExpired: Boolean(row.media_expired),
     cost: row.cost !== null && row.cost !== undefined ? Number(row.cost) : null,
     estimatedCost: row.estimated_cost !== null && row.estimated_cost !== undefined ? Number(row.estimated_cost) : null,
     error: row.error,
@@ -38,7 +42,17 @@ export function rowToJob(row) {
 
 const FIELD_MAP = {
   taskId: 'task_id', sourceUrl: 'source_url', estimatedCost: 'estimated_cost', startedAt: 'started_at',
+  thumbUrl: 'thumb_url', mediaExpired: 'media_expired',
 };
+
+// Last loaded history, shown instantly on the next visit while the fresh
+// copy loads from the database.
+function readCache() {
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') || []; } catch { return []; }
+}
+function writeCache(list) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(list.slice(0, 60))); } catch { /* full or blocked */ }
+}
 
 export function jobPatchToRow(patch) {
   const row = {};
@@ -90,18 +104,22 @@ async function migrateLegacy(supabase, existingTaskIds) {
 
 export function useSharedHistory({ onError, onMigrated } = {}) {
   const supabase = supabaseBrowser();
-  const [jobs, setJobs] = useState([]);
+  const [jobs, setJobs] = useState(readCache);
   const [ready, setReady] = useState(false);
   const errorRef = useRef(onError);
   errorRef.current = onError;
+  const lastLoad = useRef(0);
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from('generations').select('*').order('created_at', { ascending: false }).limit(PAGE_SIZE);
+    lastLoad.current = Date.now();
+    const { data, error } = await supabase.from('generations').select(COLUMNS).order('created_at', { ascending: false }).limit(PAGE_SIZE);
     if (error) { errorRef.current?.(`Não foi possível carregar o histórico: ${error.message}`); return []; }
     const list = (data || []).map(rowToJob);
     setJobs(list);
     return list;
   }, [supabase]);
+
+  useEffect(() => { if (ready) writeCache(jobs); }, [jobs, ready]);
 
   useEffect(() => {
     let active = true;
@@ -126,7 +144,7 @@ export function useSharedHistory({ onError, onMigrated } = {}) {
       .subscribe();
 
     // Realtime can drop while the tab sleeps; refresh when it comes back.
-    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    const onVisible = () => { if (document.visibilityState === 'visible' && Date.now() - lastLoad.current > 30000) load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       active = false;
@@ -137,15 +155,17 @@ export function useSharedHistory({ onError, onMigrated } = {}) {
   }, [supabase, load]);
 
   const insertJob = useCallback(async (job) => {
-    const { data, error } = await supabase.from('generations').insert(jobPatchToRow(job)).select('*').single();
+    const { data, error } = await supabase.from('generations').insert(jobPatchToRow(job)).select(COLUMNS).single();
     if (error) throw new Error(error.code === '23505' ? 'Esse vídeo já está no histórico' : error.message);
     const created = rowToJob(data);
     setJobs((list) => sortJobs([created, ...list.filter((j) => j.id !== created.id)]));
     return created;
   }, [supabase]);
 
-  const updateJob = useCallback(async (id, patch) => {
+  // `local: true` only changes this screen (used for frequent progress ticks).
+  const updateJob = useCallback(async (id, patch, { local = false } = {}) => {
     setJobs((list) => list.map((j) => (j.id === id ? { ...j, ...patch } : j)));
+    if (local) return;
     const { error } = await supabase.from('generations').update(jobPatchToRow(patch)).eq('id', id);
     if (error) errorRef.current?.(`Não foi possível salvar no histórico: ${error.message}`);
   }, [supabase]);

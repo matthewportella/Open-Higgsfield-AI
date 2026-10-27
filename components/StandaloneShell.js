@@ -4,7 +4,7 @@
 // on the server (APIs area), and the creation history is shared by the team.
 
 import { useState, useEffect, useCallback } from 'react';
-import { ImageStudio, LipSyncStudio, CinemaStudio } from 'studio';
+import dynamic from 'next/dynamic';
 import {
   LuImage, LuVideo, LuMic, LuClapperboard, LuSparkles, LuKeyRound, LuLogOut, LuUser,
 } from 'react-icons/lu';
@@ -13,6 +13,26 @@ import WalletBadge from './WalletBadge';
 import LoginScreen from './LoginScreen';
 import StudioSettings from './StudioSettings';
 import { supabaseBrowser, apiFetch, accessToken } from '@/lib/supabase/browser';
+
+// The Muapi studios are large; load them only when their tab is opened.
+const studioLoading = () => <div className="h-full flex items-center justify-center text-[#d9ff00] text-2xl animate-spin">◌</div>;
+const ImageStudio = dynamic(() => import('studio').then((m) => m.ImageStudio), { ssr: false, loading: studioLoading });
+const LipSyncStudio = dynamic(() => import('studio').then((m) => m.LipSyncStudio), { ssr: false, loading: studioLoading });
+const CinemaStudio = dynamic(() => import('studio').then((m) => m.CinemaStudio), { ssr: false, loading: studioLoading });
+
+// Remember the last membership check so returning visits open instantly;
+// it is re-checked in the background every time.
+const MEMBER_CACHE = 'ohf_member_v1';
+function cachedMember(email) {
+  try {
+    const m = JSON.parse(localStorage.getItem(MEMBER_CACHE) || 'null');
+    return m && m.email === email ? m : undefined;
+  } catch { return undefined; }
+}
+function signOut() {
+  try { localStorage.removeItem(MEMBER_CACHE); localStorage.removeItem('ohf_history_cache_v1'); } catch { /* ignore */ }
+  return supabaseBrowser().auth.signOut();
+}
 
 const TABS = [
   { id: 'video',   label: 'Vídeo',    icon: LuVideo,        engine: 'apimart' },
@@ -57,7 +77,7 @@ function NotInvited({ email }) {
       <div className="max-w-sm space-y-4">
         <h1 className="text-xl font-black text-white">Acesso não liberado</h1>
         <p className="text-sm text-white/60">O e-mail <b className="text-white">{email}</b> não faz parte da equipe deste estúdio. Peça ao dono para liberar seu acesso.</p>
-        <button type="button" onClick={() => supabaseBrowser().auth.signOut()} className="px-4 py-2.5 rounded-xl bg-white/[0.08] text-white text-sm">Sair</button>
+        <button type="button" onClick={signOut} className="px-4 py-2.5 rounded-xl bg-white/[0.08] text-white text-sm">Sair</button>
       </div>
     </div>
   );
@@ -90,8 +110,14 @@ export default function StandaloneShell() {
   useEffect(() => {
     if (!session) { setMember(undefined); return; }
     let cancelled = false;
+    const cached = cachedMember(email);
+    if (cached) setMember(cached);
     supabase.from('members').select('email, role').eq('email', email).maybeSingle()
-      .then(({ data }) => { if (!cancelled) setMember(data || null); });
+      .then(({ data, error }) => {
+        if (cancelled || (error && cached)) return;
+        setMember(data || null);
+        try { if (data) localStorage.setItem(MEMBER_CACHE, JSON.stringify(data)); else localStorage.removeItem(MEMBER_CACHE); } catch { /* ignore */ }
+      });
     return () => { cancelled = true; };
   }, [session, email, supabase]);
 
@@ -168,7 +194,7 @@ export default function StandaloneShell() {
                 {[['engines', 'APIs'], ['team', 'Equipe'], ['codex', 'Conectar Codex'], ['account', 'Conta']].map(([id, label]) => (
                   <button key={id} type="button" onClick={() => openSettings(id)} className="w-full text-left px-3 py-2 rounded-lg text-sm text-white/80 hover:bg-white/5">{label}</button>
                 ))}
-                <button type="button" onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-red-300 hover:bg-white/5"><LuLogOut size={14} />Sair</button>
+                <button type="button" onClick={signOut} className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-red-300 hover:bg-white/5"><LuLogOut size={14} />Sair</button>
               </div>
             )}
           </div>
@@ -176,6 +202,13 @@ export default function StandaloneShell() {
       </header>
 
       <main className="flex-1 min-w-0 min-h-0 overflow-hidden relative">
+        {/* The video studio stays mounted while other tabs are open, so coming
+            back is instant and running generations keep being tracked. */}
+        {(!engines || engineOn('apimart')) && (
+          <div className={activeTab === 'video' ? 'h-full' : 'hidden'}>
+            <VideoWorkspace email={email} />
+          </div>
+        )}
         {activeTab === 'settings' ? (
           <StudioSettings email={email} role={member.role} initialSection={settingsSection} enginesData={engines} reloadEngines={reloadEngines} />
         ) : needsEngine ? (
@@ -187,9 +220,7 @@ export default function StandaloneShell() {
             </p>
             <button onClick={() => openSettings('engines')} className="px-4 py-2 rounded-xl bg-[#d9ff00] text-black text-sm font-bold">Abrir APIs</button>
           </div>
-        ) : activeTab === 'video' ? (
-          <VideoWorkspace email={email} />
-        ) : (
+        ) : activeTab === 'video' ? null : (
           <div className="h-full overflow-y-auto custom-scrollbar">
             {activeTab === 'image'   && <ImageStudio   apiKey={muapiKey} />}
             {activeTab === 'lipsync' && <LipSyncStudio apiKey={muapiKey} />}

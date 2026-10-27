@@ -5,22 +5,26 @@
 // ratio, resolution, audio) and a history feed on the right (list or grid).
 // Every generation runs on Seedance 2.5 through APIMart.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LuImage, LuVideo, LuMusic, LuHistory, LuCircleHelp, LuList, LuLayoutGrid,
   LuHeart, LuCopy, LuDownload, LuEllipsis, LuRotateCcw, LuTrash2, LuChevronRight,
   LuClock, LuRectangleHorizontal, LuGem, LuVolume2, LuVolumeX, LuAtSign, LuX,
-  LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm,
+  LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm, LuPlay,
 } from 'react-icons/lu';
 import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
 import { accessToken, uploadToStorage } from '@/lib/supabase/browser';
 import { useSharedHistory } from './useSharedHistory';
+import { useMediaKeeper } from './useMediaKeeper';
+import MediaThumb, { ExpiredMedia } from './MediaThumb';
 import MotionPanel from './MotionPanel';
 import {
   VIDEO_MODELS, DEFAULT_MODEL_ID, getModel, modelName, normalizeSettings, filterRefs, estimateCost, buildPayload,
 } from './videoModels';
 
 const refreshBalance = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(BALANCE_REFRESH_EVENT)); };
+
+const PAGE = 12;
 
 const REF_LABELS = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio' };
 
@@ -152,7 +156,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
     }
   };
 
-  const doneVideos = history.filter((j) => j.status === 'completed' && j.url).slice(0, 12);
+  const doneVideos = history.filter((j) => j.status === 'completed' && j.url && !j.mediaExpired).slice(0, 12);
   const mediaRef = useRef(null);
 
   // Video and audio references go to the team's storage to get a public link.
@@ -221,7 +225,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
               <div className="grid grid-cols-4 gap-1.5">
                 {doneVideos.map((j) => (
                   <button key={j.id} type="button" onClick={() => add('video', j.url, j.prompt.slice(0, 40))} className="aspect-square rounded-lg overflow-hidden bg-black border border-white/10 hover:border-[#d9ff00]">
-                    <video src={j.url} muted preload="metadata" className="w-full h-full object-cover" />
+                    <MediaThumb job={j} compact />
                   </button>
                 ))}
               </div>
@@ -295,7 +299,12 @@ function JobActions({ job, onFavorite, onCopy, onDownload, onDelete }) {
   );
 }
 
-function PendingMedia({ job, now }) {
+function PendingMedia({ job }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
   const label = job.status === 'processing'
     ? (job.progress ? `Gerando ${job.progress}%` : 'Gerando')
     : 'Na fila';
@@ -312,10 +321,24 @@ function PendingMedia({ job, now }) {
   );
 }
 
-function JobMedia({ job, now, onRetry }) {
-  if (job.status === 'completed' && job.url) {
-    return <video src={job.url} controls playsInline preload="metadata" className="max-w-full max-h-full rounded-lg bg-black" />;
+function PlayableMedia({ job }) {
+  const [playing, setPlaying] = useState(false);
+  if (job.mediaExpired) return <div className="w-full h-full rounded-lg overflow-hidden"><ExpiredMedia /></div>;
+  if (playing) {
+    return <video src={job.url} controls autoPlay playsInline className="max-w-full max-h-full rounded-lg bg-black" onError={() => setPlaying(false)} />;
   }
+  return (
+    <button type="button" onClick={() => setPlaying(true)} aria-label="Reproduzir vídeo" className="relative h-full max-w-full rounded-lg overflow-hidden bg-black" style={{ aspectRatio: cssRatio(job.mode === 'create' ? job.settings.ratio : 'adaptive') }}>
+      <MediaThumb job={job} className="w-full h-full object-contain" />
+      <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <span className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white"><LuPlay size={20} className="ml-0.5" /></span>
+      </span>
+    </button>
+  );
+}
+
+function JobMedia({ job, onRetry }) {
+  if (job.status === 'completed' && job.url) return <PlayableMedia job={job} />;
   if (job.status === 'failed') {
     return (
       <div className="flex flex-col items-center gap-3 text-center px-6">
@@ -325,7 +348,7 @@ function JobMedia({ job, now, onRetry }) {
       </div>
     );
   }
-  return <PendingMedia job={job} now={now} />;
+  return <PendingMedia job={job} />;
 }
 
 function JobMeta({ job }) {
@@ -338,12 +361,12 @@ function JobMeta({ job }) {
   );
 }
 
-function ListItem({ job, now, handlers }) {
+const ListItem = memo(function ListItem({ job, handlers }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
       <div className="group relative rounded-2xl bg-[#111113] border border-white/[0.05] h-[300px] sm:h-[460px] flex items-center justify-center p-3">
-        <JobMedia job={job} now={now} onRetry={() => handlers.rerun(job)} />
-        {job.status === 'completed' && (
+        <JobMedia job={job} onRetry={() => handlers.rerun(job)} />
+        {job.status === 'completed' && !job.mediaExpired && (
           <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
             <JobActions job={job} {...handlers.bind(job)} />
           </div>
@@ -371,26 +394,26 @@ function ListItem({ job, now, handlers }) {
       </div>
     </div>
   );
-}
+});
 
-function GridItem({ job, now, handlers, onOpen }) {
+const GridItem = memo(function GridItem({ job, handlers, onOpen }) {
   return (
     <div className="group relative rounded-xl overflow-hidden bg-[#111113] border border-white/[0.05]" style={{ aspectRatio: cssRatio(job.mode === 'create' ? job.settings.ratio : 'adaptive') }}>
       {job.status === 'completed' && job.url ? (
-        <button type="button" onClick={() => onOpen(job)} className="block w-full h-full" aria-label="Abrir vídeo">
-          <video src={job.url} muted loop playsInline preload="metadata" className="w-full h-full object-cover" onMouseEnter={(e) => e.currentTarget.play().catch(() => {})} onMouseLeave={(e) => { e.currentTarget.pause(); }} />
+        <button type="button" onClick={() => !job.mediaExpired && onOpen(job)} className="block w-full h-full" aria-label="Abrir vídeo">
+          <MediaThumb job={job} hoverPlay />
         </button>
       ) : (
-        <div className="w-full h-full flex items-center justify-center"><JobMedia job={job} now={now} onRetry={() => handlers.rerun(job)} /></div>
+        <div className="w-full h-full flex items-center justify-center"><JobMedia job={job} onRetry={() => handlers.rerun(job)} /></div>
       )}
-      {job.status === 'completed' && (
+      {job.status === 'completed' && !job.mediaExpired && (
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           <JobActions job={job} {...handlers.bind(job)} />
         </div>
       )}
     </div>
   );
-}
+});
 
 /* ─────────────────────────────── main page ───────────────────────────────── */
 
@@ -414,7 +437,6 @@ export default function VideoWorkspace({ email }) {
   const [importPrompt, setImportPrompt] = useState('');
   const [lightbox, setLightbox] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const [now, setNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
   const promptRef = useRef(null);
   const polling = useRef(new Set());
@@ -459,12 +481,7 @@ export default function VideoWorkspace({ email }) {
   }, [ready]);
   useEffect(() => { try { localStorage.setItem('hf_video_view', view); localStorage.setItem('hf_video_grid', String(gridSize)); } catch { /* ignore */ } }, [view, gridSize]);
 
-  const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'processing');
-  useEffect(() => {
-    if (!hasActive) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [hasActive]);
+  useMediaKeeper(jobs, updateJob);
 
   // Poll every unfinished job (any teammate's, or Codex's) and save progress
   // to the shared history; this also resumes after a reload.
@@ -473,13 +490,16 @@ export default function VideoWorkspace({ email }) {
       if (!job.taskId || polling.current.has(job.id)) continue;
       if (job.status !== 'queued' && job.status !== 'processing') continue;
       polling.current.add(job.id);
-      let lastSaved = '';
+      // Progress is shown at once but only saved when the status changes or it
+      // moves 10 points, so the team's screens are not flooded with updates.
+      let saved = { status: job.status, progress: job.progress || 0 };
       pollTask(accessToken, job.taskId, {
         startedAt: job.imported ? Date.now() : job.startedAt,
         onStatus: ({ status, progress }) => {
           const next = status === 'processing' ? 'processing' : 'queued';
-          const sig = `${next}:${progress}`;
-          if (sig !== lastSaved) { lastSaved = sig; updateJob(job.id, { status: next, progress }); }
+          const persist = next !== saved.status || progress - saved.progress >= 10;
+          if (persist) saved = { status: next, progress };
+          updateJob(job.id, { status: next, progress }, { local: !persist });
         },
       })
         .then((res) => {
@@ -550,7 +570,7 @@ export default function VideoWorkspace({ email }) {
     removeJob(job.id);
   };
 
-  const handlers = {
+  const handlerImpl = {
     rerun: (job) => startJob(job),
     reuse: (job) => {
       if (job.settings?.task === 'motion') { setTab('motion'); toast('Abra o vídeo e a foto de novo no Motion Control, ou use Rerun para repetir igual'); return; }
@@ -585,6 +605,14 @@ export default function VideoWorkspace({ email }) {
       onDelete: () => confirmDelete(job),
     }),
   };
+  // Same object on every render (so history items can skip re-rendering),
+  // always calling the latest version of each handler.
+  const handlerRef = useRef(handlerImpl);
+  handlerRef.current = handlerImpl;
+  const handlers = useMemo(() => Object.fromEntries(
+    Object.keys(handlerImpl).map((k) => [k, (...args) => handlerRef.current[k](...args)]),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), []);
 
   const importVideo = async (e) => {
     e.preventDefault();
@@ -612,8 +640,21 @@ export default function VideoWorkspace({ email }) {
     toast('Vídeo adicionado ao histórico');
   };
 
-  const visible = jobs.filter((j) => (!favoritesOnly || j.favorite) && (!mineOnly || j.createdBy === email));
-  const doneVideos = jobs.filter((j) => j.status === 'completed' && j.url);
+  const visible = useMemo(() => jobs.filter((j) => (!favoritesOnly || j.favorite) && (!mineOnly || j.createdBy === email)), [jobs, favoritesOnly, mineOnly, email]);
+  const doneVideos = useMemo(() => jobs.filter((j) => j.status === 'completed' && j.url && !j.mediaExpired), [jobs]);
+
+  // Render the history in pages as you scroll instead of all at once.
+  const [shown, setShown] = useState(PAGE);
+  const sentinel = useRef(null);
+  useEffect(() => { setShown(PAGE); }, [favoritesOnly, mineOnly, view]);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || shown >= visible.length || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) setShown((n) => n + PAGE); }, { rootMargin: '800px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shown, visible.length]);
+  const page = visible.slice(0, shown);
 
   return (
     <div className="h-full flex flex-col lg:flex-row min-h-0 bg-[#050505] overflow-y-auto lg:overflow-hidden">
@@ -655,7 +696,7 @@ export default function VideoWorkspace({ email }) {
                 <div className="grid grid-cols-4 gap-1.5">
                   {doneVideos.slice(0, 8).map((j) => (
                     <button key={j.id} type="button" onClick={() => setSourceUrl(j.url)} className={`aspect-square rounded-lg overflow-hidden bg-black border-2 ${sourceUrl === j.url ? 'border-[#d9ff00]' : 'border-transparent hover:border-white/30'}`}>
-                      <video src={j.url} muted preload="metadata" className="w-full h-full object-cover" />
+                      <MediaThumb job={j} compact />
                     </button>
                   ))}
                 </div>
@@ -822,12 +863,13 @@ export default function VideoWorkspace({ email }) {
               <p className="text-sm text-white/45 max-w-sm">{favoritesOnly ? 'Toque no coração de um vídeo para guardá-lo aqui.' : 'Escreva um prompt no painel ao lado, escolha a duração e clique em Gerar.'}</p>
             </div>
           ) : view === 'list' ? (
-            <div className="space-y-4">{visible.map((job) => <ListItem key={job.id} job={job} now={now} handlers={handlers} />)}</div>
+            <div className="space-y-4">{page.map((job) => <ListItem key={job.id} job={job} handlers={handlers} />)}</div>
           ) : (
             <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${gridSize}px, 1fr))` }}>
-              {visible.map((job) => <GridItem key={job.id} job={job} now={now} handlers={handlers} onOpen={setLightbox} />)}
+              {page.map((job) => <GridItem key={job.id} job={job} handlers={handlers} onOpen={setLightbox} />)}
             </div>
           )}
+          {shown < visible.length && <div ref={sentinel} className="h-10" aria-hidden="true" />}
         </div>
       </section>
 

@@ -9,6 +9,7 @@ import { LuUpload, LuLink, LuX, LuCheck, LuSparkles, LuFilm, LuUser, LuVideo } f
 import { uploadToStorage, accessToken } from '@/lib/supabase/browser';
 import { uploadImageToApimart, safeMediaUrl } from '@/packages/studio/src/apimart';
 import { MOTION_MODELS, getMotionModel, estimateMotionCost } from './videoModels';
+import MediaThumb from './MediaThumb';
 
 const money = (v) => `$${v.toFixed(2)}`;
 
@@ -153,7 +154,7 @@ export default function MotionPanel({ doneVideos, toast, onGenerate }) {
                 <div className="grid grid-cols-4 gap-1.5">
                   {doneVideos.slice(0, 8).map((j) => (
                     <button key={j.id} type="button" onClick={() => setSourceUrl(j.url)} title="Usar este vídeo" className="aspect-square rounded-lg overflow-hidden bg-black border border-transparent hover:border-[#d9ff00]">
-                      <video src={j.url} muted preload="metadata" className="w-full h-full object-cover" />
+                      <MediaThumb job={j} compact />
                     </button>
                   ))}
                 </div>
