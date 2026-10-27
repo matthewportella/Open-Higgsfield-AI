@@ -12,11 +12,11 @@ import {
   LuClock, LuRectangleHorizontal, LuGem, LuVolume2, LuVolumeX, LuAtSign, LuX,
   LuLink, LuUpload, LuSparkles, LuStamp, LuChartNoAxesColumn, LuCheck, LuFilm, LuPlay,
 } from 'react-icons/lu';
-import { submitSeedanceTask, pollTask, uploadImageToApimart, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
+import { submitSeedanceTask, pollTask, safeMediaUrl, BALANCE_REFRESH_EVENT } from '@/packages/studio/src/apimart';
 import { accessToken, uploadToStorage } from '@/lib/supabase/browser';
 import { useSharedHistory } from './useSharedHistory';
 import { useMediaKeeper } from './useMediaKeeper';
-import MediaThumb, { ExpiredMedia } from './MediaThumb';
+import MediaThumb, { ExpiredMedia, SafeImg } from './MediaThumb';
 import MotionPanel from './MotionPanel';
 import {
   VIDEO_MODELS, DEFAULT_MODEL_ID, getModel, modelName, normalizeSettings, filterRefs, estimateCost, buildPayload,
@@ -121,7 +121,7 @@ function Toasts({ toasts, onDismiss }) {
 
 /* ─────────────────────────── reference picker ────────────────────────────── */
 
-function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
+function AddReference({ refs, onAdd, history, toast, model }) {
   const [panel, setPanel] = useState(null); // 'image' | 'video' | 'audio'
   const [url, setUrl] = useState('');
   const [uploading, setUploading] = useState(0);
@@ -147,7 +147,7 @@ function AddReference({ apimartKey, refs, onAdd, history, toast, model }) {
     if (file.size > 20 * 1024 * 1024) { toast('A imagem passa de 20 MB.', 'error'); return; }
     try {
       setUploading(1);
-      const uploaded = await uploadImageToApimart(apimartKey, file, (p) => setUploading(Math.max(1, p)));
+      const uploaded = await uploadToStorage(file); // permanent, unlike APIMart's 72 h links
       add('image', uploaded, file.name, uploaded);
     } catch (err) {
       toast(err.message, 'error');
@@ -260,7 +260,7 @@ function RefChips({ refs, onRemove, onMention, model }) {
         return (
           <div key={r.id} className="group flex items-center gap-1.5 bg-white/[0.06] border border-white/10 rounded-lg pl-1 pr-1.5 py-1">
             {r.type === 'image' && r.thumb
-              ? <img src={r.thumb} alt="" className="w-6 h-6 rounded object-cover" />
+              ? <SafeImg src={r.thumb} className="w-6 h-6 rounded object-cover" />
               : <span className="w-6 h-6 rounded bg-white/10 flex items-center justify-center"><Icon size={12} className="text-white/60" /></span>}
             {model.frames ? (
               <span className="text-[11px] text-white/80">{n === 1 ? 'Primeiro quadro' : 'Último quadro'}</span>
@@ -321,24 +321,31 @@ function PendingMedia({ job }) {
   );
 }
 
-function PlayableMedia({ job }) {
+function PlayableMedia({ job, onRestore }) {
   const [playing, setPlaying] = useState(false);
-  if (job.mediaExpired) return <div className="w-full h-full rounded-lg overflow-hidden"><ExpiredMedia /></div>;
+  const restore = onRestore ? (file) => onRestore(job, file) : undefined;
+  if (job.mediaExpired) return <div className="w-full h-full rounded-lg overflow-hidden"><ExpiredMedia onRestore={restore} /></div>;
   if (playing) {
     return <video src={job.url} controls autoPlay playsInline className="max-w-full max-h-full rounded-lg bg-black" onError={() => setPlaying(false)} />;
   }
   return (
-    <button type="button" onClick={() => setPlaying(true)} aria-label="Reproduzir vídeo" className="relative h-full max-w-full rounded-lg overflow-hidden bg-black" style={{ aspectRatio: cssRatio(job.mode === 'create' ? job.settings.ratio : 'adaptive') }}>
-      <MediaThumb job={job} className="w-full h-full object-contain" />
-      <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white"><LuPlay size={20} className="ml-0.5" /></span>
-      </span>
-    </button>
+    <div role="button" tabIndex={0} onClick={() => setPlaying(true)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPlaying(true); } }} aria-label="Reproduzir vídeo" className="relative h-full max-w-full rounded-lg overflow-hidden bg-black cursor-pointer" style={{ aspectRatio: cssRatio(job.mode === 'create' ? job.settings.ratio : 'adaptive') }}>
+      <MediaThumb
+        job={job}
+        className="w-full h-full object-contain"
+        onRestore={restore}
+        overlay={(
+          <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white"><LuPlay size={20} className="ml-0.5" /></span>
+          </span>
+        )}
+      />
+    </div>
   );
 }
 
-function JobMedia({ job, onRetry }) {
-  if (job.status === 'completed' && job.url) return <PlayableMedia job={job} />;
+function JobMedia({ job, onRetry, onRestore }) {
+  if (job.status === 'completed' && job.url) return <PlayableMedia job={job} onRestore={onRestore} />;
   if (job.status === 'failed') {
     return (
       <div className="flex flex-col items-center gap-3 text-center px-6">
@@ -365,7 +372,7 @@ const ListItem = memo(function ListItem({ job, handlers }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
       <div className="group relative rounded-2xl bg-[#111113] border border-white/[0.05] h-[300px] sm:h-[460px] flex items-center justify-center p-3">
-        <JobMedia job={job} onRetry={() => handlers.rerun(job)} />
+        <JobMedia job={job} onRetry={() => handlers.rerun(job)} onRestore={handlers.restore} />
         {job.status === 'completed' && !job.mediaExpired && (
           <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
             <JobActions job={job} {...handlers.bind(job)} />
@@ -377,7 +384,7 @@ const ListItem = memo(function ListItem({ job, handlers }) {
         <p className="text-[13px] leading-snug text-white/60 uppercase line-clamp-6 break-words">{job.prompt}</p>
         {job.refs.some((r) => r.type === 'image' && r.thumb) && (
           <div className="flex gap-1.5">
-            {job.refs.filter((r) => r.type === 'image' && r.thumb).slice(0, 4).map((r) => <img key={r.id} src={r.thumb} alt="" className="w-9 h-9 rounded-md object-cover" />)}
+            {job.refs.filter((r) => r.type === 'image' && r.thumb).slice(0, 4).map((r) => <SafeImg key={r.id} src={r.thumb} className="w-9 h-9 rounded-md object-cover" />)}
           </div>
         )}
         <JobMeta job={job} />
@@ -400,9 +407,13 @@ const GridItem = memo(function GridItem({ job, handlers, onOpen }) {
   return (
     <div className="group relative rounded-xl overflow-hidden bg-[#111113] border border-white/[0.05]" style={{ aspectRatio: cssRatio(job.mode === 'create' ? job.settings.ratio : 'adaptive') }}>
       {job.status === 'completed' && job.url ? (
-        <button type="button" onClick={() => !job.mediaExpired && onOpen(job)} className="block w-full h-full" aria-label="Abrir vídeo">
-          <MediaThumb job={job} hoverPlay />
-        </button>
+        job.mediaExpired ? (
+          <ExpiredMedia onRestore={(file) => handlers.restore(job, file)} />
+        ) : (
+          <button type="button" onClick={() => onOpen(job)} className="block w-full h-full" aria-label="Abrir vídeo">
+            <MediaThumb job={job} hoverPlay />
+          </button>
+        )
       ) : (
         <div className="w-full h-full flex items-center justify-center"><JobMedia job={job} onRetry={() => handlers.rerun(job)} /></div>
       )}
@@ -571,6 +582,15 @@ export default function VideoWorkspace({ email }) {
   };
 
   const handlerImpl = {
+    restore: async (job, file) => {
+      try {
+        const url = await uploadToStorage(file);
+        await updateJob(job.id, { url, mediaExpired: false, thumbUrl: null });
+        toast('Vídeo restaurado e salvo para sempre');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    },
     rerun: (job) => startJob(job),
     reuse: (job) => {
       if (job.settings?.task === 'motion') { setTab('motion'); toast('Abra o vídeo e a foto de novo no Motion Control, ou use Rerun para repetir igual'); return; }
@@ -708,7 +728,7 @@ export default function VideoWorkspace({ email }) {
             </div>
           )}
 
-          <AddReference key={model.id} model={model} apimartKey={accessToken} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
+          <AddReference key={model.id} model={model} refs={refs} onAdd={(r) => setRefs((list) => [...list, r])} history={jobs} toast={toast} />
           <RefChips model={model} refs={refs} onRemove={(id) => setRefs((list) => list.filter((r) => r.id !== id))} onMention={insertMention} />
 
           {/* prompt */}

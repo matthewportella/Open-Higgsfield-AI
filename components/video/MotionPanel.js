@@ -6,10 +6,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { LuUpload, LuLink, LuX, LuCheck, LuSparkles, LuFilm, LuUser, LuVideo } from 'react-icons/lu';
-import { uploadToStorage, accessToken } from '@/lib/supabase/browser';
-import { uploadImageToApimart, safeMediaUrl } from '@/packages/studio/src/apimart';
+import { uploadToStorage } from '@/lib/supabase/browser';
+import { safeMediaUrl } from '@/packages/studio/src/apimart';
 import { MOTION_MODELS, getMotionModel, estimateMotionCost } from './videoModels';
-import MediaThumb from './MediaThumb';
+import MediaThumb, { SafeImg } from './MediaThumb';
 
 const money = (v) => `$${v.toFixed(2)}`;
 
@@ -79,7 +79,7 @@ export default function MotionPanel({ doneVideos, toast, onGenerate }) {
     if (images.length >= maxImages) { toast(`Até ${maxImages} ${maxImages > 1 ? 'imagens' : 'imagem'} neste modelo.`, 'error'); return; }
     try {
       setBusy('image');
-      const url = await uploadImageToApimart(accessToken, file);
+      const url = await uploadToStorage(file); // permanent, unlike APIMart's 72 h links
       setImages((list) => [...list, { id: uid(), url }]);
     } catch (err) {
       toast(err.message, 'error');
@@ -174,7 +174,7 @@ export default function MotionPanel({ doneVideos, toast, onGenerate }) {
           <div className="flex flex-wrap gap-2">
             {images.map((img) => (
               <div key={img.id} className="relative w-16 h-16 rounded-lg overflow-hidden bg-black">
-                <img src={img.url} alt="" className="w-full h-full object-cover" />
+                <SafeImg src={img.url} className="w-full h-full object-cover" />
                 <button type="button" onClick={() => setImages((list) => list.filter((i) => i.id !== img.id))} aria-label="Remover imagem" className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"><LuX size={10} /></button>
               </div>
             ))}

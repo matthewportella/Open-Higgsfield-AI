@@ -56,10 +56,11 @@ export function useMediaKeeper(jobs, updateJob) {
 
   useEffect(() => {
     if (busy.current) return;
-    const next = jobs.find((j) => j.status === 'completed' && j.url && !j.mediaExpired && !tried.current.has(j.id)
+    const key = (j) => `${j.id}:${j.url}`;
+    const next = jobs.find((j) => j.status === 'completed' && j.url && !j.mediaExpired && !tried.current.has(key(j))
       && (!isPermanentUrl(j.url) || !j.thumbUrl));
     if (!next) return;
-    tried.current.add(next.id);
+    tried.current.add(key(next));
     busy.current = true;
 
     (async () => {
