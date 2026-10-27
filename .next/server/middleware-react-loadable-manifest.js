@@ -1,1 +1,0 @@
-self.__REACT_LOADABLE_MANIFEST='{"components/StandaloneShell.js -> studio":{"id":8647,"files":["static/chunks/647.d3429e98770db098.js"]}}';
